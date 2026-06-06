@@ -196,9 +196,10 @@ function App() {
   const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('elab_api_url') || DEFAULT_API_URL);
   const [salesApiUrl, setSalesApiUrl] = useState(() => localStorage.getItem('elab_sales_api_url') || '');
   const [useMock, setUseMock] = useState(() => {
-    const saved = localStorage.getItem('elab_api_url');
-    if (saved === '') return true;
-    return false;
+    const savedMock = localStorage.getItem('elab_use_mock');
+    if (savedMock === 'true') return true;
+    if (savedMock === 'false') return false;
+    return false; // Default to live data if not configured
   });
 
   const [newUserName, setNewUserName] = useState('');
@@ -212,7 +213,8 @@ function App() {
     localStorage.setItem('elab_users', JSON.stringify(users));
     localStorage.setItem('elab_api_url', apiUrl);
     localStorage.setItem('elab_sales_api_url', salesApiUrl);
-  }, [users, apiUrl, salesApiUrl]);
+    localStorage.setItem('elab_use_mock', String(useMock));
+  }, [users, apiUrl, salesApiUrl, useMock]);
 
   useEffect(() => {
     if (users.length > 0 && !evalUser) {
