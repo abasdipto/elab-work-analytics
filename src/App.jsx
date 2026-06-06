@@ -192,7 +192,7 @@ function App() {
   const [evalSubmitting, setEvalSubmitting] = useState(false);
   const [evalMsg, setEvalMsg] = useState('');
 
-  const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbzQpsKJUdyFc4UbUUW85Mg_TOexl7gsM2VkSyq58pKzY_aJEVLqSEGsqFuzr3nCcn/exec';
+  const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbyOpsMJHJdyFkHUbUuXW5QmG_TOes47pnM2Vk5yw58pPHzY_6XEVLqSE9sPucz3nCcm/exec';
   const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('elab_api_url') || DEFAULT_API_URL);
   const [salesApiUrl, setSalesApiUrl] = useState(() => localStorage.getItem('elab_sales_api_url') || '');
   const [useMock, setUseMock] = useState(() => {
@@ -211,6 +211,17 @@ function App() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mobileFeedOpen, setMobileFeedOpen] = useState(false);
   const hasSyncedUsersRef = useRef(false);
+
+  useEffect(() => {
+    const saved = localStorage.getItem('elab_api_url');
+    const oldPlaceholder = 'https://script.google.com/macros/s/AKfycbzQpsKJUdyFc4UbUUW85Mg_TOexl7gsM2VkSyq58pKzY_aJEVLqSEGsqFuzr3nCcn/exec';
+    if (!saved || saved === oldPlaceholder) {
+      localStorage.setItem('elab_api_url', DEFAULT_API_URL);
+      setApiUrl(DEFAULT_API_URL);
+      localStorage.setItem('elab_use_mock', 'false');
+      setUseMock(false);
+    }
+  }, []);
 
   useEffect(() => {
     localStorage.setItem('elab_users', JSON.stringify(users));
