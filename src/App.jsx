@@ -558,7 +558,11 @@ function App() {
         detail: row['Detail'],
         sheetUrl: row['Sheet URL']
       })).filter(f => f.time) // Ensure valid time
-       .reverse(); // Newest first
+       .sort((a, b) => {
+         const tA = safeParse(a.time)?.getTime() || 0;
+         const tB = safeParse(b.time)?.getTime() || 0;
+         return tB - tA; // Newest first
+       });
 
       const allEvaluations = formattedFeed
         .filter(f => safeLower(f.type).trim() === 'evaluation')
