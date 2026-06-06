@@ -1,0 +1,1764 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { LayoutDashboard, Users, Activity, CheckCircle, FileText, UserPlus, Settings, Hash, Bell, Plus, Clock, Trash2, Globe, Camera } from 'lucide-react';
+import { format, subDays, parseISO, isToday, isYesterday, isThisWeek, isThisMonth, subMonths, isSameDay } from 'date-fns';
+import './index.css';
+
+// Safe string conversion - prevents crashes from non-string types
+const safeStr = (val) => (val == null ? '' : String(val));
+const safeLower = (val) => safeStr(val).toLowerCase().trim();
+
+// Safe date parse - returns null for invalid dates
+const safeParse = (dateStr) => {
+  try {
+    if (!dateStr) return null;
+    const d = parseISO(String(dateStr));
+    return isNaN(d.getTime()) ? null : d;
+  } catch { return null; }
+};
+
+// Safe JSON parse - prevents crashes
+const safeJsonParse = (str) => {
+  try {
+    return JSON.parse(str);
+  } catch {
+    return null;
+  }
+};
+
+// Convert image file to compressed base64 data URL (max 150x150)
+const fileToBase64 = (file, maxSize = 150) => new Promise((resolve, reject) => {
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let w = img.width, h = img.height;
+      if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
+      else { w = Math.round(w * maxSize / h); h = maxSize; }
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(canvas.toDataURL('image/jpeg', 0.8));
+    };
+    img.onerror = reject;
+    img.src = e.target.result;
+  };
+  reader.onerror = reject;
+  reader.readAsDataURL(file);
+});
+
+// Error Boundary to catch rendering crashes
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null, errorInfo: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, errorInfo) {
+    console.error('🔴 ErrorBoundary caught:', error, errorInfo);
+    this.setState({ errorInfo });
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ background: '#0f172a', color: '#fff', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+          <div style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '12px', padding: '2rem', maxWidth: '600px', width: '100%' }}>
+            <h2 style={{ color: '#ef4444', marginBottom: '1rem' }}>⚠️ Something went wrong</h2>
+            <p style={{ color: '#fca5a5', marginBottom: '1rem', fontSize: '0.9rem' }}>{this.state.error?.message}</p>
+            <pre style={{ background: 'rgba(0,0,0,0.3)', padding: '1rem', borderRadius: '8px', fontSize: '0.75rem', color: '#94a3b8', overflowX: 'auto', maxHeight: '200px' }}>
+              {this.state.error?.stack}
+            </pre>
+            <button onClick={() => this.setState({ hasError: false, error: null })} style={{ marginTop: '1rem', padding: '0.5rem 1.5rem', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}>
+              Try Again
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+// Default mock data with Unsplash avatars
+const initialMockUsers = [
+  { id: '1', name: 'Ullash', role: 'Researcher', avatarUrl: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?auto=format&fit=crop&w=150&q=80', active: true },
+  { id: '2', name: 'Jubayer', role: 'Marketer', avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=150&q=80', active: true },
+  { id: '3', name: 'Robin', role: 'Designer', avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&w=150&q=80', active: true },
+  { id: '4', name: 'Dipto', role: 'Uploader', avatarUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=150&q=80', active: true },
+];
+
+// Reusable Avatar component with fallback to initials
+function Avatar({ user, size = 32 }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  
+  if (!user) return null;
+  
+  const initials = user.name ? user.name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase() : '?';
+  
+  let bg = 'linear-gradient(135deg, #6366f1, #4f46e5)';
+  if (user.role === 'Researcher') bg = 'linear-gradient(135deg, #60a5fa, #2563eb)';
+  else if (user.role === 'Marketer') bg = 'linear-gradient(135deg, #c084fc, #9333ea)';
+  else if (user.role === 'Designer') bg = 'linear-gradient(135deg, #fb923c, #ea580c)';
+  else if (user.role === 'Uploader') bg = 'linear-gradient(135deg, #22d3ee, #0891b2)';
+  
+  if (user.avatarUrl && !imgFailed) {
+    return (
+      <img 
+        src={user.avatarUrl} 
+        alt={user.name} 
+        onError={() => setImgFailed(true)}
+        style={{ 
+          width: `${size}px`, 
+          height: `${size}px`, 
+          borderRadius: '50%', 
+          objectFit: 'cover',
+          border: '1.5px solid rgba(255, 255, 255, 0.15)',
+          boxShadow: '0 2px 8px rgba(0, 0, 0, 0.25)',
+          display: 'block',
+          flexShrink: 0
+        }}
+      />
+    );
+  }
+  
+  return (
+    <div style={{
+      width: `${size}px`,
+      height: `${size}px`,
+      borderRadius: '50%',
+      background: bg,
+      color: '#fff',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontWeight: 600,
+      fontSize: size > 40 ? '1.1rem' : size < 24 ? '0.65rem' : '0.8rem',
+      boxShadow: '0 2px 8px rgba(0, 0, 0, 0.2)',
+      border: '1px solid rgba(255, 255, 255, 0.1)',
+      flexShrink: 0
+    }}>
+      {initials}
+    </div>
+  );
+}
+
+const formatPoints = (val) => {
+  if (val === 0) return '0';
+  if (val % 1 === 0) return val.toString();
+  return val.toFixed(2);
+};
+
+function App() {
+  const [passcode, setPasscode] = useState('');
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    // Bypass passcode authentication inside the Electron desktop app
+    const isElectron = navigator.userAgent.toLowerCase().includes('electron');
+    if (isElectron) return true;
+    return sessionStorage.getItem('elab_authenticated') === 'true';
+  });
+  const [passcodeError, setPasscodeError] = useState(false);
+
+  const [data, setData] = useState([]);
+  const [users, setUsers] = useState(() => {
+    const saved = localStorage.getItem('elab_users');
+    return saved ? JSON.parse(saved) : initialMockUsers;
+  });
+  const [feed, setFeed] = useState([]);
+  const [salesFeed, setSalesFeed] = useState([]);
+  const [evaluations, setEvaluations] = useState([]);
+  
+  const isUserMarketer = (userName) => {
+    const u = users.find(usr => safeLower(usr.name) === safeLower(userName));
+    return u?.role === 'Marketer';
+  };
+  
+  // Set default tab to 'global'
+  const [activeTabId, setActiveTabId] = useState('global');
+  const [timeFilter, setTimeFilter] = useState('Today'); // 'Today', 'Yesterday', 'This Week'
+  
+  const [loading, setLoading] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settingsTab, setSettingsTab] = useState('config'); // 'config' or 'evaluation'
+  const [evalUser, setEvalUser] = useState('');
+  const [evalPeriod, setEvalPeriod] = useState('2026');
+  const [evalTeamwork, setEvalTeamwork] = useState(4);
+  const [evalRules, setEvalRules] = useState(4);
+  const [evalHelping, setEvalHelping] = useState(4);
+  const [evalNotes, setEvalNotes] = useState('');
+  const [evalSubmitting, setEvalSubmitting] = useState(false);
+  const [evalMsg, setEvalMsg] = useState('');
+
+  const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('elab_api_url') || '');
+  const [salesApiUrl, setSalesApiUrl] = useState(() => localStorage.getItem('elab_sales_api_url') || '');
+  const [useMock, setUseMock] = useState(() => !localStorage.getItem('elab_api_url'));
+
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserRole, setNewUserRole] = useState('Researcher');
+  const [newUserAvatar, setNewUserAvatar] = useState('');
+  const fileInputRef = useRef(null);
+  const editFileInputRef = useRef(null);
+  const [editingPhotoUserId, setEditingPhotoUserId] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem('elab_users', JSON.stringify(users));
+    localStorage.setItem('elab_api_url', apiUrl);
+    localStorage.setItem('elab_sales_api_url', salesApiUrl);
+  }, [users, apiUrl, salesApiUrl]);
+
+  useEffect(() => {
+    if (users.length > 0 && !evalUser) {
+      setEvalUser(users[0].name);
+    }
+  }, [users, evalUser]);
+
+  const fetchData = async () => {
+    if (useMock || !apiUrl) {
+      // Mock chart
+      const mockChartData = Array.from({ length: 7 }).map((_, i) => ({
+        date: format(subDays(new Date(), 6 - i), 'MMM dd'),
+        addedNames: Math.floor(Math.random() * 20) + 50,
+        marketedLinks: Math.floor(Math.random() * 15) + 30,
+      }));
+      setData(mockChartData);
+      
+      // Mock feed spanning today and yesterday
+      setFeed([
+        { id: 1, type: 'Name Added', user: 'Demo Researcher', time: new Date().toISOString(), detail: 'Added a new name' },
+        { id: 2, type: 'Marketed', user: 'Demo Marketer', time: new Date().toISOString(), detail: 'Done' },
+        { id: 3, type: 'Name Added', user: 'Demo Researcher', time: subDays(new Date(), 1).toISOString(), detail: 'Added yesterday' },
+        { id: 4, type: 'Marketed', user: 'Demo Marketer', time: subDays(new Date(), 1).toISOString(), detail: 'Done yesterday' },
+        { id: 5, type: 'Marketed', user: 'Demo Marketer', time: subDays(new Date(), 3).toISOString(), detail: 'Done last week' }
+      ]);
+
+      setEvaluations([
+        { id: 101, user: 'Demo Researcher', evaluator: 'Admin', period: '2026', teamwork: 4.5, rules: 4.2, helping: 4.8, notes: 'Very helpful team member, always follows the office rules.', time: new Date().toISOString() },
+        { id: 102, user: 'Demo Marketer', evaluator: 'Admin', period: '2026', teamwork: 4.0, rules: 4.5, helping: 4.0, notes: 'Good marketing work, communicates well with team members.', time: new Date().toISOString() }
+      ]);
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const [masterRes, salesRes] = await Promise.all([
+        fetch(apiUrl),
+        salesApiUrl ? fetch(salesApiUrl) : Promise.resolve({ json: () => [] })
+      ]);
+      const rawData = await masterRes.json();
+      const rawSales = salesApiUrl ? await salesRes.json() : [];
+      setSalesFeed(rawSales);
+      
+      const formattedFeed = rawData.map((row, index) => ({
+        id: index,
+        time: row['Timestamp'],
+        type: row['Action Type'],
+        user: row['User'],
+        detail: row['Detail'],
+        sheetUrl: row['Sheet URL']
+      })).filter(f => f.time) // Ensure valid time
+       .reverse(); // Newest first
+
+      const allEvaluations = formattedFeed
+        .filter(f => safeLower(f.type).trim() === 'evaluation')
+        .map(e => {
+          const parsed = safeJsonParse(e.detail) || {};
+          return {
+            ...e,
+            evaluator: parsed.evaluator || 'Admin',
+            period: parsed.period || 'All',
+            teamwork: Number(parsed.teamwork) || 0,
+            rules: Number(parsed.rules) || 0,
+            helping: Number(parsed.helping) || 0,
+            notes: parsed.notes || ''
+          };
+        });
+      setEvaluations(allEvaluations);
+
+      // Find latest MemberUpdate to sync users list from cloud
+      const memberUpdateRecord = formattedFeed.find(f => safeLower(f.type).trim() === 'memberupdate');
+      if (memberUpdateRecord) {
+        const parsedUsers = safeJsonParse(memberUpdateRecord.detail);
+        if (Array.isArray(parsedUsers) && parsedUsers.length > 0) {
+          setUsers(parsedUsers);
+          localStorage.setItem('elab_users', JSON.stringify(parsedUsers));
+        }
+      }
+
+      const normalFeed = formattedFeed.filter(f => {
+        const type = safeLower(f.type).trim();
+        return type !== 'evaluation' && type !== 'memberupdate';
+      });
+      setFeed(normalFeed);
+
+      const chartData = Array.from({ length: 7 }).map((_, i) => {
+        const date = subDays(new Date(), 6 - i);
+        const dayData = normalFeed.filter(f => { const d = safeParse(f.time); return d && isSameDay(d, date); });
+        const daySales = rawSales.filter(s => { const d = safeParse(s.date); return d && isSameDay(d, date); });
+        let addedNames = 0;
+        let marketedLinks = 0;
+        let totalDesigns = 0;
+        let totalUploads = 0;
+        let totalSales = 0;
+
+        if (activeTabId === 'global') {
+          addedNames = dayData.filter(d => safeLower(d.type).trim() === 'name added' && !isUserMarketer(d.user)).length;
+          marketedLinks = dayData.filter(d => safeLower(d.type).trim() === 'marketed' || (safeLower(d.type).trim() === 'name added' && isUserMarketer(d.user))).length;
+          totalDesigns = dayData.filter(d => safeLower(d.type).includes('design')).length;
+          totalUploads = dayData.filter(d => safeLower(d.type).includes('upload')).length;
+          totalSales = daySales.length;
+        } else {
+          const activeUser = users.find(u => u.id === activeTabId);
+          if (activeUser) {
+            addedNames = dayData.filter(d => safeLower(d.user) === safeLower(activeUser.name) && safeLower(d.type).trim() === 'name added' && activeUser.role !== 'Marketer').length;
+            marketedLinks = dayData.filter(d => safeLower(d.user) === safeLower(activeUser.name) && (safeLower(d.type).trim() === 'marketed' || (safeLower(d.type).trim() === 'name added' && activeUser.role === 'Marketer'))).length;
+            totalDesigns = dayData.filter(d => safeLower(d.user) === safeLower(activeUser.name) && safeLower(d.type).includes('design')).length;
+            totalUploads = dayData.filter(d => safeLower(d.user) === safeLower(activeUser.name) && safeLower(d.type).includes('upload')).length;
+            
+            const userSchools = normalFeed
+              .filter(d => safeLower(d.user) === safeLower(activeUser.name))
+              .map(d => safeLower(d.detail).trim())
+              .filter(Boolean);
+              
+            totalSales = daySales.filter(s => {
+              const saleSchool = safeLower(s.schoolName).trim();
+              return userSchools.some(userSchool => 
+                userSchool && saleSchool && (saleSchool.includes(userSchool) || userSchool.includes(saleSchool))
+              );
+            }).length;
+          }
+        }
+
+        return {
+          date: format(date, 'MMM dd'),
+          addedNames,
+          marketedLinks,
+          totalDesigns,
+          totalUploads,
+          totalSales
+        };
+      });
+      setData(chartData);
+      
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+    const interval = setInterval(fetchData, 30000);
+    return () => clearInterval(interval);
+  }, [useMock, apiUrl, salesApiUrl, activeTabId]);
+
+  const handlePhotoSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const base64 = await fileToBase64(file);
+      setNewUserAvatar(base64);
+    } catch (err) {
+      console.error('Failed to process image:', err);
+    }
+    e.target.value = ''; // Reset input so same file can be re-selected
+  };
+
+  const saveUsersToCloud = async (updatedUsers) => {
+    if (useMock || !apiUrl) return;
+    try {
+      const payload = {
+        type: 'MemberUpdate',
+        user: 'System',
+        time: new Date().toISOString(),
+        detail: JSON.stringify(updatedUsers),
+        sheetUrl: ''
+      };
+      await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (err) {
+      console.error('Failed to sync users list to cloud:', err);
+    }
+  };
+
+  const handleEditPhotoSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !editingPhotoUserId) return;
+    try {
+      const base64 = await fileToBase64(file);
+      const updated = users.map(u => u.id === editingPhotoUserId ? { ...u, avatarUrl: base64 } : u);
+      setUsers(updated);
+      await saveUsersToCloud(updated);
+    } catch (err) {
+      console.error('Failed to process image:', err);
+    }
+    setEditingPhotoUserId(null);
+    e.target.value = '';
+  };
+
+  const handleAddUser = async (e) => {
+    e.preventDefault();
+    if (!newUserName) return;
+    const newUser = { id: Date.now().toString(), name: newUserName.trim(), role: newUserRole, avatarUrl: newUserAvatar, active: true };
+    const updated = [...users, newUser];
+    setUsers(updated);
+    setNewUserName('');
+    setNewUserAvatar('');
+    await saveUsersToCloud(updated);
+  };
+
+  const handleDeleteUser = async (id) => {
+    const updated = users.filter(u => u.id !== id);
+    setUsers(updated);
+    if (activeTabId === id) setActiveTabId('global');
+    await saveUsersToCloud(updated);
+  };
+
+  const submitEvaluation = async (userName, teamwork, rules, helping, period, notes) => {
+    if (useMock) {
+      const mockEval = {
+        id: Date.now(),
+        time: new Date().toISOString(),
+        type: 'Evaluation',
+        user: userName,
+        evaluator: 'Admin',
+        period,
+        teamwork: Number(teamwork),
+        rules: Number(rules),
+        helping: Number(helping),
+        notes
+      };
+      setEvaluations(prev => [mockEval, ...prev]);
+      return true;
+    }
+    
+    if (!apiUrl) return false;
+    
+    const payload = {
+      time: new Date().toISOString(),
+      type: 'Evaluation',
+      user: userName,
+      value: JSON.stringify({
+        evaluator: 'Admin',
+        period,
+        teamwork: Number(teamwork),
+        rules: Number(rules),
+        helping: Number(helping),
+        notes
+      }),
+      sheetUrl: 'Manual Entry'
+    };
+    
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'text/plain;charset=utf-8'
+        },
+        body: JSON.stringify(payload)
+      });
+      // Google Apps Script usually returns redirect or text response.
+      // If we got any response, we treat it as successful if status is ok.
+      if (response.ok) {
+        setTimeout(fetchData, 1000);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error("Error submitting evaluation:", error);
+      return false;
+    }
+  };
+
+  const calculateLeaderboard = () => {
+    return users.map(user => {
+      let basePoints = 0;
+      let bonusPoints = 0;
+      
+      // 1. Get user actions from the filtered feed (respects the active timeFilter)
+      const userActions = filteredFeed.filter(f => safeLower(f.user) === safeLower(user.name));
+      
+      let researchCount = 0;
+      let marketingCount = 0;
+      let designCount = 0;
+      let uploadCount = 0;
+      
+      userActions.forEach(action => {
+        const type = safeLower(action.type).trim();
+        const isMarketing = type === 'marketed' || (user.role === 'Marketer' && type === 'name added');
+        const isResearch = type === 'name added' && user.role !== 'Marketer';
+        
+        if (isResearch) {
+          basePoints += 2;
+          researchCount++;
+        } else if (isMarketing) {
+          basePoints += 2.5;
+          marketingCount++;
+        } else if (type.includes('design')) {
+          basePoints += 0.84;
+          designCount++;
+        } else if (type.includes('upload')) {
+          basePoints += 0.84;
+          uploadCount++;
+        }
+      });
+      
+      // 2. Designer Daily Target Bonus (+10 points for each day with >= 120 designs)
+      let designerDailyBonus = 0;
+      if (user.role === 'Designer') {
+        const designsByDay = {};
+        userActions.forEach(action => {
+          const type = safeLower(action.type);
+          if (type.includes('design') && action.time) {
+            try {
+              const parsedDate = safeParse(action.time);
+              if (parsedDate) {
+                const dateStr = format(parsedDate, 'yyyy-MM-dd');
+                designsByDay[dateStr] = (designsByDay[dateStr] || 0) + 1;
+              }
+            } catch (e) {
+              console.error("Error formatting date:", e);
+            }
+          }
+        });
+        
+        Object.keys(designsByDay).forEach(dateStr => {
+          if (designsByDay[dateStr] >= 120) {
+            designerDailyBonus += 10;
+          }
+        });
+        bonusPoints += designerDailyBonus;
+      }
+
+      // 3. Sales bonus (+2 points per sale for researcher and marketer)
+      let salesCount = 0;
+      if (user.role === 'Researcher' || user.role === 'Marketer') {
+         const userSchools = feed
+          .filter(f => {
+            if (safeLower(f.user) !== safeLower(user.name)) return false;
+            const t = safeLower(f.type).trim();
+            if (user.role === 'Researcher') return t === 'name added';
+            if (user.role === 'Marketer') return t === 'marketed';
+            return false;
+          })
+          .map(f => safeLower(f.detail).trim())
+          .filter(Boolean);
+          
+        const userSales = filteredSalesFeed.filter(s => {
+          const saleSchool = safeLower(s.schoolName).trim();
+          return userSchools.some(userSchool => 
+            userSchool && saleSchool && (saleSchool.includes(userSchool) || userSchool.includes(saleSchool))
+          );
+        });
+        
+        salesCount = userSales.length;
+        bonusPoints += salesCount * 2;
+      }
+      
+      const points = basePoints + bonusPoints;
+      
+      return {
+        ...user,
+        points,
+        basePoints,
+        bonusPoints,
+        breakdown: {
+          research: researchCount,
+          marketing: marketingCount,
+          design: designCount,
+          upload: uploadCount,
+          sales: salesCount,
+          dailyBonus: designerDailyBonus
+        }
+      };
+    }).sort((a, b) => b.points - a.points);
+  };
+
+  const activeUser = activeTabId === 'global' ? null : users.find(u => u.id === activeTabId);
+
+  // --- FILTER LOGIC ---
+  // If global, we filter feed based on timeFilter to calculate stats
+  const getFilteredFeed = () => {
+    return feed.filter(item => {
+      if (!item.time) return false;
+      try {
+        const date = safeParse(item.time);
+        if (!date) return timeFilter === 'All Time';
+        if (timeFilter === 'Today') return isToday(date);
+        if (timeFilter === 'Yesterday') return isYesterday(date);
+        if (timeFilter === 'This Week') return isThisWeek(date);
+        if (timeFilter === 'This Month') return isThisMonth(date);
+        
+        if (timeFilter === 'Last Month') {
+          const lastMonthDate = subMonths(new Date(), 1);
+          return date.getMonth() === lastMonthDate.getMonth() && date.getFullYear() === lastMonthDate.getFullYear();
+        }
+        
+        if (timeFilter === 'All Time') return true;
+        return true;
+      } catch (e) {
+        console.warn('Date filter error:', e, item.time);
+        return timeFilter === 'All Time';
+      }
+    });
+  };
+
+  const filteredFeed = activeTabId === 'global' 
+    ? getFilteredFeed() 
+    : getFilteredFeed().filter(f => safeLower(f.user) === safeLower(activeUser?.name));
+  
+  // Calculate Global Stats
+  const globalNamesAdded = filteredFeed.filter(f => safeLower(f.type).trim() === 'name added' && !isUserMarketer(f.user)).length;
+  const globalMarketed = filteredFeed.filter(f => safeLower(f.type).trim() === 'marketed' || (safeLower(f.type).trim() === 'name added' && isUserMarketer(f.user))).length;
+  const globalDesigns = filteredFeed.filter(f => safeLower(f.type).includes('design')).length;
+  const globalUploads = filteredFeed.filter(f => safeLower(f.type).includes('upload')).length;
+  
+  const getFilteredSales = () => {
+    return salesFeed.filter(item => {
+      if (!item.date) return false;
+      try {
+        const date = safeParse(item.date);
+        if (!date) return timeFilter === 'All Time';
+        if (timeFilter === 'Today') return isToday(date);
+        if (timeFilter === 'Yesterday') return isYesterday(date);
+        if (timeFilter === 'This Week') return isThisWeek(date);
+        if (timeFilter === 'This Month') return isThisMonth(date);
+        if (timeFilter === 'Last Month') {
+          const lastMonthDate = subMonths(new Date(), 1);
+          return date.getMonth() === lastMonthDate.getMonth() && date.getFullYear() === lastMonthDate.getFullYear();
+        }
+        return true;
+      } catch (e) {
+        console.warn('Sales date filter error:', e, item.date);
+        return timeFilter === 'All Time';
+      }
+    });
+  };
+  
+  const filteredSalesFeed = getFilteredSales();
+  let globalTotalSales = filteredSalesFeed.length;
+  let userTotalSales = 0;
+  
+  if (activeTabId !== 'global' && activeUser) {
+    try {
+      const userAssociatedSchools = feed
+        .filter(f => safeLower(f.user) === safeLower(activeUser.name) && (safeLower(f.type).trim() === 'name added' || safeLower(f.type).trim() === 'marketed'))
+        .map(f => safeLower(f.detail).trim())
+        .filter(Boolean);
+        
+      userTotalSales = filteredSalesFeed.filter(s => {
+        const saleSchool = safeLower(s.schoolName).trim();
+        return userAssociatedSchools.some(userSchool => 
+          userSchool && saleSchool && (saleSchool.includes(userSchool) || userSchool.includes(saleSchool))
+        );
+      }).length;
+    } catch (e) {
+      console.error('Error calculating userTotalSales:', e);
+      userTotalSales = 0;
+    }
+  }
+
+  const handlePasscodeSubmit = (e) => {
+    e.preventDefault();
+    if (passcode === 'elab2026') {
+      setIsAuthenticated(true);
+      sessionStorage.setItem('elab_authenticated', 'true');
+      setPasscodeError(false);
+    } else {
+      setPasscodeError(true);
+      setPasscode('');
+    }
+  };
+
+  if (!isAuthenticated) {
+    return (
+      <div style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100vh',
+        background: '#0f172a',
+        color: '#fff',
+        fontFamily: 'system-ui, sans-serif'
+      }}>
+        <div style={{
+          background: 'rgba(30, 41, 59, 0.7)',
+          border: '1.5px solid rgba(255, 255, 255, 0.08)',
+          borderRadius: '16px',
+          padding: '2.5rem',
+          width: '100%',
+          maxWidth: '400px',
+          textAlign: 'center',
+          boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
+          backdropFilter: 'blur(12px)'
+        }}>
+          <h2 style={{ fontSize: '1.75rem', marginBottom: '0.5rem', color: '#a5b4fc', fontWeight: 600 }}>eLab Analytics</h2>
+          <p style={{ color: '#94a3b8', fontSize: '0.9rem', marginBottom: '2rem' }}>Enter passcode to access the workspace dashboard.</p>
+          
+          <form onSubmit={handlePasscodeSubmit}>
+            <input 
+              type="password"
+              value={passcode}
+              onChange={(e) => setPasscode(e.target.value)}
+              placeholder="Enter Passcode"
+              autoFocus
+              style={{
+                width: '100%',
+                padding: '0.75rem 1rem',
+                borderRadius: '8px',
+                border: passcodeError ? '1.5px solid #ef4444' : '1.5px solid rgba(255, 255, 255, 0.1)',
+                background: '#090d16',
+                color: '#fff',
+                fontSize: '1.1rem',
+                textAlign: 'center',
+                letterSpacing: '0.1rem',
+                marginBottom: '1rem',
+                outline: 'none',
+                transition: 'all 0.2s'
+              }}
+            />
+            {passcodeError && (
+              <p style={{ color: '#fca5a5', fontSize: '0.85rem', marginBottom: '1rem' }}>Incorrect passcode. Please try again.</p>
+            )}
+            <button 
+              type="submit" 
+              style={{
+                width: '100%',
+                padding: '0.75rem',
+                background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: '8px',
+                fontSize: '1rem',
+                fontWeight: 600,
+                cursor: 'pointer',
+                transition: 'all 0.2s',
+                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.3)'
+              }}
+              onMouseEnter={(e) => e.target.style.opacity = '0.9'}
+              onMouseLeave={(e) => e.target.style.opacity = '1'}
+            >
+              Access Dashboard
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="app-container">
+      
+      {/* 1. SIDEBAR */}
+      <div className="sidebar">
+        <div className="sidebar-header">
+          <h1>eLab Analytics</h1>
+          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>Workspace</p>
+        </div>
+
+        <div className="sidebar-group" style={{ marginTop: 0 }}>
+          <div 
+            className={`sidebar-item ${activeTabId === 'global' ? 'active' : ''}`}
+            onClick={() => setActiveTabId('global')}
+            style={{ fontWeight: 600 }}
+          >
+            <Globe size={18} />
+            <span>Global Analytics</span>
+          </div>
+        </div>
+
+        <div className="sidebar-group">
+          <div className="sidebar-group-title">
+            <span>Researchers</span>
+            <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />
+          </div>
+          {users.filter(u => u.role === 'Researcher').map(user => (
+            <div 
+              key={user.id} 
+              className={`sidebar-item ${activeTabId === user.id ? 'active' : ''}`}
+              onClick={() => setActiveTabId(user.id)}
+              style={{ gap: '0.5rem' }}
+            >
+              <Avatar user={user} size={20} />
+              <span>{user.name}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="sidebar-group">
+          <div className="sidebar-group-title">
+            <span>Marketers</span>
+            <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />
+          </div>
+          {users.filter(u => u.role === 'Marketer').map(user => (
+            <div 
+              key={user.id} 
+              className={`sidebar-item ${activeTabId === user.id ? 'active' : ''}`}
+              onClick={() => setActiveTabId(user.id)}
+              style={{ gap: '0.5rem' }}
+            >
+              <Avatar user={user} size={20} />
+              <span>{user.name}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="sidebar-group">
+          <div className="sidebar-group-title">
+            <span>Designers</span>
+            <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />
+          </div>
+          {users.filter(u => u.role === 'Designer').map(user => (
+            <div 
+              key={user.id} 
+              className={`sidebar-item ${activeTabId === user.id ? 'active' : ''}`}
+              onClick={() => setActiveTabId(user.id)}
+              style={{ gap: '0.5rem' }}
+            >
+              <Avatar user={user} size={20} />
+              <span>{user.name}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="sidebar-group">
+          <div className="sidebar-group-title">
+            <span>Uploaders</span>
+            <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />
+          </div>
+          {users.filter(u => u.role === 'Uploader').map(user => (
+            <div 
+              key={user.id} 
+              className={`sidebar-item ${activeTabId === user.id ? 'active' : ''}`}
+              onClick={() => setActiveTabId(user.id)}
+              style={{ gap: '0.5rem' }}
+            >
+              <Avatar user={user} size={20} />
+              <span>{user.name}</span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 'auto', padding: '1rem 1.5rem' }}>
+          <div className="sidebar-item" onClick={() => setShowSettings(true)} style={{ background: 'rgba(255,255,255,0.05)' }}>
+            <Settings size={18} />
+            <span>Settings & Setup</span>
+          </div>
+        </div>
+      </div>
+
+      {/* 2. MAIN DASHBOARD CONTENT */}
+      <div className="main-content" style={{ position: 'relative' }}>
+        {loading && <div className="top-loading-bar"></div>}
+        <div className="content-header">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+            {activeTabId !== 'global' && activeUser && (
+              <Avatar user={activeUser} size={48} />
+            )}
+            <div>
+              <h2 style={{ fontSize: '1.75rem', fontWeight: 600, color: '#fff', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {activeTabId === 'global' ? (
+                  <><Globe size={24} style={{ opacity: 0.5 }} /> Team Global Analytics</>
+                ) : (
+                  activeUser?.name
+                )}
+              </h2>
+              <p style={{ color: 'var(--text-muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                {activeTabId === 'global' ? 'Viewing combined team data' : `Role: ${activeUser?.role}`} 
+                <span style={{ color: 'rgba(255,255,255,0.15)' }}>|</span>
+                {useMock ? (
+                  <span>Using Demo Data</span>
+                ) : (
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    <span className={`status-dot ${loading ? 'syncing' : 'live'}`}></span>
+                    {loading ? 'Syncing...' : 'Live Mode'}
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+          
+          {/* Time Filter Toggle */}
+          <div style={{ display: 'flex', background: 'rgba(15,23,42,0.6)', borderRadius: '8px', padding: '4px', border: '1px solid var(--glass-border)', flexWrap: 'wrap', gap: '4px' }}>
+            {['Today', 'Yesterday', 'This Week', 'This Month', 'Last Month', 'All Time'].map(filter => (
+              <button
+                key={filter}
+                onClick={() => setTimeFilter(filter)}
+                style={{
+                  background: timeFilter === filter ? 'var(--primary)' : 'transparent',
+                  color: timeFilter === filter ? '#fff' : 'var(--text-muted)',
+                  border: 'none',
+                  padding: '0.5rem 1rem',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontWeight: 500,
+                  transition: 'all 0.2s'
+                }}
+              >
+                {filter}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {loading && feed.length === 0 ? (
+          <div className="loading-spinner">
+            <div className="spinner"></div>
+            <p>Loading live data...</p>
+          </div>
+        ) : (
+          <>
+            <div className="dashboard-grid" style={{ marginBottom: '2rem' }}>
+              {activeTabId === 'global' ? (
+                <>
+                  {/* GLOBAL STATS */}
+                  <div className="stat-card col-span-4">
+                    <div className="stat-icon-wrapper blue">
+                      <Users size={24} color="#60a5fa" />
+                    </div>
+                    <div className="stat-details">
+                      <span className="stat-title">Total Research ({timeFilter})</span>
+                      <span className="stat-value">{globalNamesAdded}</span>
+                    </div>
+                  </div>
+                  <div className="stat-card col-span-4">
+                    <div className="stat-icon-wrapper purple">
+                      <Activity size={24} color="#c084fc" />
+                    </div>
+                    <div className="stat-details">
+                      <span className="stat-title">Total Marketing ({timeFilter})</span>
+                      <span className="stat-value">{globalMarketed}</span>
+                    </div>
+                  </div>
+                  <div className="stat-card col-span-4">
+                    <div className="stat-icon-wrapper green" style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.15), rgba(21,128,61,0.05))', border: '1px solid rgba(34,197,94,0.25)' }}>
+                      <CheckCircle size={24} color="#22c55e" />
+                    </div>
+                    <div className="stat-details">
+                      <span className="stat-title">Total Sales ({timeFilter})</span>
+                      <span className="stat-value">{globalTotalSales}</span>
+                    </div>
+                  </div>
+                  <div className="stat-card col-span-6">
+                    <div className="stat-icon-wrapper orange" style={{ background: 'rgba(251, 146, 60, 0.12)', border: '1px solid rgba(251, 146, 60, 0.22)' }}>
+                      <FileText size={24} color="#fb923c" />
+                    </div>
+                    <div className="stat-details">
+                      <span className="stat-title">Total Designs ({timeFilter})</span>
+                      <span className="stat-value">{globalDesigns}</span>
+                    </div>
+                  </div>
+                  <div className="stat-card col-span-6">
+                    <div className="stat-icon-wrapper cyan" style={{ background: 'rgba(34, 211, 238, 0.12)', border: '1px solid rgba(34, 211, 238, 0.22)' }}>
+                      <Globe size={24} color="#22d3ee" />
+                    </div>
+                    <div className="stat-details">
+                      <span className="stat-title">Total Uploads ({timeFilter})</span>
+                      <span className="stat-value">{globalUploads}</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* INDIVIDUAL STATS */}
+                  {(() => {
+                    let title = "Tasks Done";
+                    let iconColor = "#c084fc";
+                    let wrapperClass = "purple";
+                    let IconComponent = Activity;
+                    let count = 0;
+
+                    if (activeUser?.role === 'Researcher') {
+                      title = "Names Collected";
+                      iconColor = "#60a5fa";
+                      wrapperClass = "blue";
+                      IconComponent = Users;
+                      count = filteredFeed.filter(f => safeLower(f.type).trim() === 'name added').length;
+                    } else if (activeUser?.role === 'Marketer') {
+                      title = "Schools Marketed";
+                      iconColor = "#c084fc";
+                      wrapperClass = "purple";
+                      IconComponent = Activity;
+                      count = filteredFeed.filter(f => safeLower(f.type).trim() === 'marketed' || safeLower(f.type).trim() === 'name added').length;
+                    } else if (activeUser?.role === 'Designer') {
+                      title = "Designs Created";
+                      iconColor = "#fb923c";
+                      wrapperClass = "orange";
+                      IconComponent = FileText;
+                      count = filteredFeed.filter(f => safeLower(f.type).includes('design')).length;
+                    } else if (activeUser?.role === 'Uploader') {
+                      title = "Uploads Completed";
+                      iconColor = "#22d3ee";
+                      wrapperClass = "cyan";
+                      IconComponent = UserPlus;
+                      count = filteredFeed.filter(f => safeLower(f.type).includes('upload')).length;
+                    } else {
+                      count = filteredFeed.length;
+                    }
+
+                    return (
+                      <div className="stat-card col-span-6">
+                        <div className={`stat-icon-wrapper ${wrapperClass}`} style={{ 
+                          background: wrapperClass === 'orange' ? 'rgba(251, 146, 60, 0.12)' : wrapperClass === 'cyan' ? 'rgba(34, 211, 238, 0.12)' : undefined,
+                          border: wrapperClass === 'orange' ? '1px solid rgba(251, 146, 60, 0.22)' : wrapperClass === 'cyan' ? '1px solid rgba(34, 211, 238, 0.22)' : undefined
+                        }}>
+                          <IconComponent size={24} color={iconColor} />
+                        </div>
+                        <div className="stat-details">
+                          <span className="stat-title">{title} ({timeFilter})</span>
+                          <span className="stat-value">{count}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  <div className="stat-card col-span-6">
+                    <div className="stat-icon-wrapper green" style={{ background: 'linear-gradient(135deg, rgba(34,197,94,0.15), rgba(21,128,61,0.05))', border: '1px solid rgba(34,197,94,0.25)' }}>
+                      <CheckCircle size={24} color="#22c55e" />
+                    </div>
+                    <div className="stat-details">
+                      <span className="stat-title">Sales Attributed ({timeFilter})</span>
+                      <span className="stat-value">{userTotalSales}</span>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Area Chart for Progress */}
+            <div className="dashboard-grid">
+              <div className="chart-container col-span-12">
+                <h3 className="chart-title">
+                  {activeTabId === 'global' ? 'Team Progress Over Time' : `${activeUser?.name}'s Progress Over Time`} (Last 7 Days)
+                </h3>
+                <div style={{ height: '350px' }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={data} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="colorAdded" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#60a5fa" stopOpacity={0.8}/>
+                          <stop offset="95%" stopColor="#60a5fa" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorMarketed" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#c084fc" stopOpacity={0.8}/>
+                          <stop offset="95%" stopColor="#c084fc" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorDesigns" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#fb923c" stopOpacity={0.8}/>
+                          <stop offset="95%" stopColor="#fb923c" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorUploads" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#22d3ee" stopOpacity={0.8}/>
+                          <stop offset="95%" stopColor="#22d3ee" stopOpacity={0}/>
+                        </linearGradient>
+                        <linearGradient id="colorSales" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#22c55e" stopOpacity={0.8}/>
+                          <stop offset="95%" stopColor="#22c55e" stopOpacity={0}/>
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                      <XAxis dataKey="date" stroke="#64748b" tick={{fill: '#64748b'}} tickLine={false} axisLine={false} />
+                      <YAxis stroke="#64748b" tick={{fill: '#64748b'}} tickLine={false} axisLine={false} />
+                      <RechartsTooltip contentStyle={{ backgroundColor: 'rgba(15, 23, 42, 0.9)', borderColor: 'rgba(255,255,255,0.1)', borderRadius: '8px' }} itemStyle={{ color: '#fff' }} />
+                      
+                      {activeTabId === 'global' ? (
+                        <>
+                          <Area type="monotone" dataKey="addedNames" name="Research" stroke="#60a5fa" strokeWidth={3} fillOpacity={1} fill="url(#colorAdded)" />
+                          <Area type="monotone" dataKey="marketedLinks" name="Marketing" stroke="#c084fc" strokeWidth={3} fillOpacity={1} fill="url(#colorMarketed)" />
+                          <Area type="monotone" dataKey="totalDesigns" name="Design" stroke="#fb923c" strokeWidth={3} fillOpacity={1} fill="url(#colorDesigns)" />
+                          <Area type="monotone" dataKey="totalUploads" name="Upload" stroke="#22d3ee" strokeWidth={3} fillOpacity={1} fill="url(#colorUploads)" />
+                          <Area type="monotone" dataKey="totalSales" name="Sales" stroke="#22c55e" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
+                        </>
+                      ) : activeUser?.role === 'Researcher' ? (
+                        <>
+                          <Area type="monotone" dataKey="addedNames" name="Names Collected" stroke="#60a5fa" strokeWidth={3} fillOpacity={1} fill="url(#colorAdded)" />
+                          <Area type="monotone" dataKey="totalSales" name="Sales from Research" stroke="#22c55e" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
+                        </>
+                      ) : activeUser?.role === 'Marketer' ? (
+                        <>
+                          <Area type="monotone" dataKey="marketedLinks" name="Links Marketed" stroke="#c084fc" strokeWidth={3} fillOpacity={1} fill="url(#colorMarketed)" />
+                          <Area type="monotone" dataKey="totalSales" name="Sales from Marketing" stroke="#22c55e" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
+                        </>
+                      ) : activeUser?.role === 'Designer' ? (
+                        <>
+                          <Area type="monotone" dataKey="totalDesigns" name="Designs Created" stroke="#fb923c" strokeWidth={3} fillOpacity={1} fill="url(#colorDesigns)" />
+                          <Area type="monotone" dataKey="totalSales" name="Sales from Designs" stroke="#22c55e" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
+                        </>
+                      ) : (
+                        <>
+                          <Area type="monotone" dataKey="totalUploads" name="Uploads Completed" stroke="#22d3ee" strokeWidth={3} fillOpacity={1} fill="url(#colorUploads)" />
+                          <Area type="monotone" dataKey="totalSales" name="Sales from Uploads" stroke="#22c55e" strokeWidth={3} fillOpacity={1} fill="url(#colorSales)" />
+                        </>
+                      )}
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            </div>
+
+            {/* Team Leaderboard & Contribution */}
+            {activeTabId === 'global' && (
+              <div className="dashboard-grid" style={{ marginTop: '2rem' }}>
+                {/* 🏆 Leaderboard Section */}
+                <div className="chart-container col-span-8" style={{ height: 'auto', minHeight: '400px' }}>
+                  <h3 className="chart-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>🏆 Performance Leaderboard ({timeFilter})</span>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>
+                      Sorted by total points
+                    </span>
+                  </h3>
+                  
+                  <div className="leaderboard-list">
+                    {calculateLeaderboard().map((member, index) => {
+                      let medal = '';
+                      if (index === 0) medal = '🥇';
+                      else if (index === 1) medal = '🥈';
+                      else if (index === 2) medal = '🥉';
+                      
+                      return (
+                        <div key={member.id} className="leaderboard-item" style={{ gap: '0.75rem' }}>
+                          <div className="leaderboard-rank-wrapper" style={{ marginRight: '0.25rem' }}>
+                            <span className="leaderboard-rank">{medal || `#${index + 1}`}</span>
+                          </div>
+                          
+                          <Avatar user={member} size={36} />
+                          
+                          <div className="leaderboard-member-info">
+                            <div className="leaderboard-member-name">
+                              {member.name}
+                              <span className={`role-badge ${member.role.toLowerCase()}`}>{member.role}</span>
+                            </div>
+                            <div className="leaderboard-member-breakdown">
+                              {[
+                                member.role === 'Researcher' && `${member.breakdown.research} Research`,
+                                member.role === 'Marketer' && `${member.breakdown.marketing} Marketing`,
+                                member.role === 'Designer' && `${member.breakdown.design} Designs`,
+                                member.role === 'Uploader' && `${member.breakdown.upload} Uploads`,
+                                (member.role === 'Researcher' || member.role === 'Marketer') && `${member.breakdown.sales} Sales`,
+                                member.role === 'Designer' && member.breakdown.dailyBonus > 0 && `+${member.breakdown.dailyBonus} Target Bonus`
+                              ].filter(Boolean).join(' • ')}
+                            </div>
+                          </div>
+                          
+                          <div className="leaderboard-stats-row">
+                            <div className="leaderboard-stat-col">
+                              <span className="leaderboard-stat-val">{formatPoints(member.basePoints)}</span>
+                              <span className="leaderboard-stat-lbl">BASE</span>
+                            </div>
+                            <div className="leaderboard-stat-col">
+                              <span className="leaderboard-stat-val" style={{ color: member.bonusPoints > 0 ? 'var(--success-color)' : 'var(--text-muted)' }}>
+                                {member.bonusPoints > 0 ? `+${formatPoints(member.bonusPoints)}` : '0'}
+                              </span>
+                              <span className="leaderboard-stat-lbl">BONUS</span>
+                            </div>
+                            <div className="leaderboard-stat-col total">
+                              <span className="leaderboard-stat-val">{formatPoints(member.points)}</span>
+                              <span className="leaderboard-stat-lbl">TOTAL</span>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* 📊 Contribution Share Section */}
+                <div className="chart-container col-span-4" style={{ height: 'auto', minHeight: '400px' }}>
+                  <h3 className="chart-title">📊 Team Contribution Share ({timeFilter})</h3>
+                  
+                  <div className="contribution-list">
+                    {(() => {
+                      const leaderboardData = calculateLeaderboard();
+                      const totalTeamPoints = leaderboardData.reduce((sum, m) => sum + m.points, 0);
+                      
+                      if (totalTeamPoints === 0) {
+                        return (
+                          <div style={{ color: 'var(--text-muted)', textAlign: 'center', marginTop: '4rem' }}>
+                            No contributions recorded for this period.
+                          </div>
+                        );
+                      }
+                      
+                      return leaderboardData.map(member => {
+                        const share = totalTeamPoints > 0 ? Math.round((member.points / totalTeamPoints) * 100) : 0;
+                        let roleColor = 'var(--primary)';
+                        if (member.role === 'Researcher') roleColor = '#60a5fa';
+                        else if (member.role === 'Marketer') roleColor = '#c084fc';
+                        else if (member.role === 'Designer') roleColor = '#fb923c';
+                        else if (member.role === 'Uploader') roleColor = '#22d3ee';
+                        
+                        return (
+                          <div key={member.id} className="contribution-item">
+                            <div className="contribution-header" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                              <Avatar user={member} size={18} />
+                              <span className="contribution-name" style={{ flex: 1 }}>{member.name}</span>
+                              <span className="contribution-percent">{share}%</span>
+                            </div>
+                            <div className="contribution-bar-bg">
+                              <div 
+                                className="contribution-bar-fill" 
+                                style={{ 
+                                  width: `${share}%`, 
+                                  backgroundColor: roleColor,
+                                  boxShadow: `0 0 8px ${roleColor}80`
+                                }}
+                              ></div>
+                            </div>
+                            <div className="contribution-details">
+                              {formatPoints(member.points)} of {formatPoints(totalTeamPoints)} pts
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* 📊 Team Performance & Increment Report for Global Dashboard */}
+            {activeTabId === 'global' && (
+              <div className="dashboard-grid" style={{ marginTop: '2rem' }}>
+                <div className="chart-container col-span-12" style={{ height: 'auto' }}>
+                  <h3 className="chart-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>📊 Team Performance & Increment Recommendation ({timeFilter})</span>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>
+                      Based on points (50%) & behavior ratings (50%)
+                    </span>
+                  </h3>
+                  
+                  <div style={{ overflowX: 'auto', marginTop: '1.25rem' }}>
+                    <table className="evaluations-table" style={{ width: '100%', borderCollapse: 'collapse', color: '#fff', fontSize: '0.9rem' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.1)', textAlign: 'left' }}>
+                          <th style={{ padding: '12px', color: '#94a3b8' }}>Member Name</th>
+                          <th style={{ padding: '12px', color: '#94a3b8' }}>Role</th>
+                          <th style={{ padding: '12px', color: '#94a3b8' }}>Points Score (50%)</th>
+                          <th style={{ padding: '12px', color: '#94a3b8' }}>Teamwork & Behavior</th>
+                          <th style={{ padding: '12px', color: '#94a3b8' }}>Rules & Culture</th>
+                          <th style={{ padding: '12px', color: '#94a3b8' }}>Helping Others</th>
+                          <th style={{ padding: '12px', color: '#94a3b8' }}>Behavior Score (50%)</th>
+                          <th style={{ padding: '12px', color: '#94a3b8' }}>Combined Index</th>
+                          <th style={{ padding: '12px', color: '#94a3b8' }}>Increment Recommendation</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {users.map(user => {
+                          const leaderboard = calculateLeaderboard();
+                          const userPoints = leaderboard.find(l => safeLower(l.name) === safeLower(user.name))?.points || 0;
+                          
+                          // Points normalization: target points is 150 points for 100% score
+                          const pointsScore = Math.min(100, (userPoints / 150) * 100);
+                          
+                          const userEvals = evaluations.filter(e => safeLower(e.user) === safeLower(user.name));
+                          let avgTeamwork = 0;
+                          let avgRules = 0;
+                          let avgHelping = 0;
+                          let behaviorScore = 0;
+                          
+                          if (userEvals.length > 0) {
+                            avgTeamwork = userEvals.reduce((sum, e) => sum + e.teamwork, 0) / userEvals.length;
+                            avgRules = userEvals.reduce((sum, e) => sum + e.rules, 0) / userEvals.length;
+                            avgHelping = userEvals.reduce((sum, e) => sum + e.helping, 0) / userEvals.length;
+                            behaviorScore = ((avgTeamwork + avgRules + avgHelping) / 3) * 20; // scale 1-5 to 0-100
+                          } else {
+                            avgTeamwork = 4.0;
+                            avgRules = 4.0;
+                            avgHelping = 4.0;
+                            behaviorScore = 80;
+                          }
+                          
+                          const combinedIndex = (pointsScore * 0.5) + (behaviorScore * 0.5);
+                          
+                          let recommendation = "🥉 Standard Increment";
+                          let recommendationClass = "recom-standard";
+                          if (combinedIndex >= 90) {
+                            recommendation = "🥇 High Increment";
+                            recommendationClass = "recom-high";
+                          } else if (combinedIndex >= 75) {
+                            recommendation = "🥈 Medium Increment";
+                            recommendationClass = "recom-medium";
+                          } else if (combinedIndex < 50) {
+                            recommendation = "⚠️ Review Required";
+                            recommendationClass = "recom-review";
+                          }
+                          
+                          return (
+                            <tr key={user.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }} className="table-row-hover">
+                              <td style={{ padding: '12px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontWeight: 600 }}>
+                                  <Avatar user={user} size={28} />
+                                  <span>{user.name}</span>
+                                </div>
+                              </td>
+                              <td style={{ padding: '12px' }}><span className={`role-badge ${user.role.toLowerCase()}`}>{user.role}</span></td>
+                              <td style={{ padding: '12px' }}>{formatPoints(userPoints)} pts ({pointsScore.toFixed(0)}%)</td>
+                              <td style={{ padding: '12px' }}>⭐ {avgTeamwork.toFixed(1)}</td>
+                              <td style={{ padding: '12px' }}>⭐ {avgRules.toFixed(1)}</td>
+                              <td style={{ padding: '12px' }}>⭐ {avgHelping.toFixed(1)}</td>
+                              <td style={{ padding: '12px' }}>{behaviorScore.toFixed(0)}%</td>
+                              <td style={{ padding: '12px', fontWeight: 700, color: 'var(--primary-glow)' }}>{combinedIndex.toFixed(0)}%</td>
+                              <td style={{ padding: '12px' }}><span className={`recom-badge ${recommendationClass}`}>{recommendation}</span></td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Behavior & Feedback History for Individual Dashboard */}
+            {activeTabId !== 'global' && activeUser && (
+              <div className="dashboard-grid" style={{ marginTop: '2rem' }}>
+                {/* 📊 Behavior & Culture Ratings */}
+                <div className="chart-container col-span-4" style={{ height: 'auto' }}>
+                  <h3 className="chart-title">📊 Behavior & Culture Ratings</h3>
+                  {(() => {
+                    const userEvals = evaluations.filter(e => safeLower(e.user) === safeLower(activeUser.name));
+                    let avgTeamwork = 4.0;
+                    let avgRules = 4.0;
+                    let avgHelping = 4.0;
+                    if (userEvals.length > 0) {
+                      avgTeamwork = userEvals.reduce((sum, e) => sum + e.teamwork, 0) / userEvals.length;
+                      avgRules = userEvals.reduce((sum, e) => sum + e.rules, 0) / userEvals.length;
+                      avgHelping = userEvals.reduce((sum, e) => sum + e.helping, 0) / userEvals.length;
+                    }
+                    
+                    const ratings = [
+                      { label: 'Teamwork & Behavior', val: avgTeamwork, color: '#60a5fa' },
+                      { label: 'Rules & Office Culture', val: avgRules, color: '#c084fc' },
+                      { label: 'Helping Others', val: avgHelping, color: '#22d3ee' }
+                    ];
+                    
+                    return (
+                      <div className="behavior-ratings-list" style={{ marginTop: '1.5rem' }}>
+                        {ratings.map((r, idx) => {
+                          const percent = (r.val / 5) * 100;
+                          return (
+                            <div key={idx} style={{ marginBottom: '1.5rem' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.9rem' }}>
+                                <span style={{ color: '#94a3b8' }}>{r.label}</span>
+                                <span style={{ fontWeight: 600, color: '#fff' }}>⭐ {r.val.toFixed(1)} / 5.0</span>
+                              </div>
+                              <div className="contribution-bar-bg" style={{ height: '10px' }}>
+                                <div 
+                                  className="contribution-bar-fill" 
+                                  style={{ 
+                                    width: `${percent}%`, 
+                                    backgroundColor: r.color,
+                                    boxShadow: `0 0 8px ${r.color}80`,
+                                    height: '10px'
+                                  }}
+                                ></div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                {/* 💬 Admin Feedback & Remarks Timeline */}
+                <div className="chart-container col-span-8" style={{ height: 'auto', minHeight: '300px' }}>
+                  <h3 className="chart-title">💬 Performance & Culture Feedback History</h3>
+                  <div className="feedback-timeline" style={{ marginTop: '1.5rem', maxHeight: '300px', overflowY: 'auto', paddingRight: '8px' }}>
+                    {(() => {
+                      const userEvals = evaluations.filter(e => safeLower(e.user) === safeLower(activeUser.name));
+                      if (userEvals.length === 0) {
+                        return (
+                          <div style={{ color: 'var(--text-muted)', textAlign: 'center', marginTop: '3rem' }}>
+                            No feedback or behavior evaluations recorded yet.
+                          </div>
+                        );
+                      }
+                      
+                      return userEvals.map((item, idx) => (
+                        <div key={item.id || idx} style={{ 
+                          borderLeft: '2px solid var(--primary)', 
+                          paddingLeft: '1.5rem', 
+                          position: 'relative', 
+                          marginBottom: '1.5rem' 
+                        }}>
+                          <div style={{ 
+                            position: 'absolute', 
+                            left: '-6px', 
+                            top: '4px', 
+                            width: '10px', 
+                            height: '10px', 
+                            borderRadius: '50%', 
+                            backgroundColor: 'var(--primary)',
+                            boxShadow: '0 0 8px var(--primary)'
+                          }}></div>
+                          
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                            <span style={{ fontWeight: 600, color: '#fff', fontSize: '0.95rem' }}>
+                              Evaluated for Period: {item.period}
+                            </span>
+                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                              {(() => { const d = safeParse(item.time); return d ? format(d, 'MMM dd, yyyy') : ''; })()}
+                            </span>
+                          </div>
+                          
+                          <div style={{ display: 'flex', gap: '12px', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '8px' }}>
+                            <span>Teamwork: ⭐ {item.teamwork.toFixed(1)}</span>
+                            <span>Rules: ⭐ {item.rules.toFixed(1)}</span>
+                            <span>Helping: ⭐ {item.helping.toFixed(1)}</span>
+                          </div>
+                          
+                          {item.notes && (
+                            <p style={{ 
+                              background: 'rgba(255,255,255,0.03)', 
+                              padding: '10px 14px', 
+                              borderRadius: '8px', 
+                              border: '1px solid rgba(255,255,255,0.05)',
+                              color: '#cbd5e1',
+                              fontSize: '0.9rem',
+                              lineHeight: '1.4'
+                            }}>
+                              {item.notes}
+                            </p>
+                          )}
+                        </div>
+                      ));
+                    })()}
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* 3. LIVE ACTIVITY FEED */}
+      <div className="feed-panel">
+        <div className="feed-title">
+          <Bell size={20} color="#a5b4fc" />
+          Live Activity Feed
+        </div>
+        <div className="feed-list">
+          {feed.slice(0, 50).map(item => (
+            <div key={item.id} className="feed-item">
+              <div className="feed-time">
+                <Clock size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'text-top' }} />
+                {(() => { const d = safeParse(item.time); return d ? format(d, 'hh:mm a - MMM dd') : 'Just now'; })()}
+              </div>
+              <div className="feed-text">
+                <strong>{item.user}</strong>{' '}
+                {(() => {
+                  const type = item.type?.toLowerCase() || '';
+                  const detail = item.detail && item.detail !== 'Done' ? item.detail : 'a school';
+                  
+                  if (type === 'marketed') return `marketed to ${detail}`;
+                  if (type === 'name added') return `researched school: ${item.detail || 'Unknown school'}`;
+                  if (type.includes('design')) return `designed mockup for ${item.detail || 'Unknown school'}`;
+                  if (type.includes('upload')) return `uploaded files for ${item.detail || 'Unknown school'}`;
+                  
+                  return `added entry: ${item.detail || 'No details'}`;
+                })()}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Settings Modal */}
+      {showSettings && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.7)', zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ background: '#1e293b', padding: '2rem', borderRadius: '12px', width: '500px', border: '1px solid var(--glass-border)', maxHeight: '90vh', overflowY: 'auto' }}>
+            <h2 style={{ color: '#fff', marginBottom: '1.25rem', display: 'flex', justifyContent: 'space-between' }}>
+              Settings & Setup
+              <button onClick={() => setShowSettings(false)} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
+            </h2>
+
+            {/* Sub Tabs */}
+            <div style={{ display: 'flex', borderBottom: '1px solid rgba(255,255,255,0.1)', marginBottom: '1.5rem', gap: '1.25rem' }}>
+              <button 
+                onClick={() => { setSettingsTab('config'); setEvalMsg(''); }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: settingsTab === 'config' ? 'var(--primary)' : 'var(--text-muted)',
+                  borderBottom: settingsTab === 'config' ? '2px solid var(--primary)' : '2px solid transparent',
+                  paddingBottom: '8px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontSize: '0.95rem'
+                }}
+              >
+                ⚙️ API & Team
+              </button>
+              <button 
+                onClick={() => { 
+                  setSettingsTab('evaluation'); 
+                  setEvalMsg(''); 
+                  if (users.length > 0 && !evalUser) {
+                    setEvalUser(users[0].name);
+                  }
+                }}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: settingsTab === 'evaluation' ? 'var(--primary)' : 'var(--text-muted)',
+                  borderBottom: settingsTab === 'evaluation' ? '2px solid var(--primary)' : '2px solid transparent',
+                  paddingBottom: '8px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  fontSize: '0.95rem'
+                }}
+              >
+                ⭐ Evaluate Member
+              </button>
+            </div>
+            
+            {settingsTab === 'config' ? (
+              <>
+                <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem' }}>
+                  <h3 style={{ fontSize: '1rem', color: '#a5b4fc', marginBottom: '0.5rem' }}>Master API URL</h3>
+                  <input 
+                    type="text" 
+                    value={apiUrl}
+                    onChange={(e) => setApiUrl(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', marginBottom: '1rem' }}
+                  />
+                  <h3 style={{ fontSize: '1rem', color: '#22c55e', marginBottom: '0.5rem' }}>Sales Record API URL (Optional)</h3>
+                  <input 
+                    type="text" 
+                    value={salesApiUrl}
+                    onChange={(e) => setSalesApiUrl(e.target.value)}
+                    placeholder="https://script.google.com/macros/s/.../exec"
+                    style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', marginBottom: '1rem' }}
+                  />
+                  <div style={{ display: 'flex', gap: '1rem' }}>
+                    <button 
+                      onClick={() => { setUseMock(false); fetchData(); }}
+                      style={{ flex: 1, padding: '0.5rem', background: apiUrl ? 'var(--primary)' : '#475569', color: '#fff', border: 'none', borderRadius: '6px', cursor: apiUrl ? 'pointer' : 'not-allowed' }}
+                      disabled={!apiUrl}
+                    >
+                      Save & Connect Live APIs
+                    </button>
+                    <button 
+                      onClick={() => setUseMock(true)}
+                      style={{ flex: 1, padding: '0.5rem', background: '#334155', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                    >
+                      Use Demo Data
+                    </button>
+                  </div>
+                </div>
+
+                <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px' }}>
+                  <h3 style={{ fontSize: '1rem', color: '#a5b4fc', marginBottom: '1rem' }}>Manage Team</h3>
+                  <form onSubmit={handleAddUser} style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}>
+                    <input 
+                      type="text" 
+                      value={newUserName}
+                      onChange={(e) => setNewUserName(e.target.value)}
+                      placeholder="User Name"
+                      required
+                      style={{ flex: '2 1 200px', padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff' }}
+                    />
+                    <select 
+                      value={newUserRole}
+                      onChange={(e) => setNewUserRole(e.target.value)}
+                      style={{ flex: '1 1 120px', padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff' }}
+                    >
+                      <option value="Researcher">Researcher</option>
+                      <option value="Marketer">Marketer</option>
+                      <option value="Designer">Designer</option>
+                      <option value="Uploader">Uploader</option>
+                    </select>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '1 1 100%', marginTop: '0.25rem' }}>
+                      <input type="file" ref={fileInputRef} accept="image/*" onChange={handlePhotoSelect} style={{ display: 'none' }} />
+                      <button type="button" onClick={() => fileInputRef.current?.click()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px dashed rgba(99, 102, 241, 0.5)', background: 'rgba(99, 102, 241, 0.1)', color: '#a5b4fc', cursor: 'pointer', fontSize: '0.85rem', transition: 'all 0.2s' }}>
+                        <Camera size={16} />
+                        {newUserAvatar ? 'Change Photo' : 'Upload Photo'}
+                      </button>
+                      {newUserAvatar && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <img src={newUserAvatar} alt="Preview" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--primary)' }} />
+                          <button type="button" onClick={() => setNewUserAvatar('')} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
+                        </div>
+                      )}
+                    </div>
+                    <button type="submit" style={{ width: '100%', padding: '0.5rem 1rem', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', marginTop: '0.5rem' }}>Add Member</button>
+                  </form>
+                  <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                    {users.map(user => (
+                      <div key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', marginBottom: '0.5rem', borderRadius: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => { setEditingPhotoUserId(user.id); editFileInputRef.current?.click(); }}>
+                            <Avatar user={user} size={28} />
+                            <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '14px', height: '14px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1.5px solid #1e293b' }}>
+                              <Camera size={8} color="#fff" />
+                            </div>
+                          </div>
+                          <div>
+                            <span style={{ color: '#fff', fontWeight: 500 }}>{user.name}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginLeft: '0.5rem' }}>({user.role})</span>
+                          </div>
+                        </div>
+                        <button onClick={() => handleDeleteUser(user.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <input type="file" ref={editFileInputRef} accept="image/*" onChange={handleEditPhotoSelect} style={{ display: 'none' }} />
+                </div>
+              </>
+            ) : (
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1.25rem', borderRadius: '8px' }}>
+                <h3 style={{ fontSize: '1.1rem', color: '#a5b4fc', marginBottom: '1rem' }}>Submit Performance Evaluation</h3>
+                
+                {evalMsg && (
+                  <div style={{ 
+                    padding: '8px 12px', 
+                    borderRadius: '6px', 
+                    background: evalMsg.includes('failed') ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+                    border: evalMsg.includes('failed') ? '1px solid rgba(239,68,68,0.3)' : '1px solid rgba(34,197,94,0.3)',
+                    color: evalMsg.includes('failed') ? '#fca5a5' : '#bbf7d0',
+                    fontSize: '0.85rem',
+                    marginBottom: '1rem'
+                  }}>
+                    {evalMsg}
+                  </div>
+                )}
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '6px' }}>Select Team Member</label>
+                  <select 
+                    value={evalUser}
+                    onChange={(e) => setEvalUser(e.target.value)}
+                    style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff' }}
+                  >
+                    {users.map(u => (
+                      <option key={u.id} value={u.name}>{u.name} ({u.role})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '6px' }}>Evaluation Period (Year/Month)</label>
+                  <input 
+                    type="text" 
+                    value={evalPeriod}
+                    onChange={(e) => setEvalPeriod(e.target.value)}
+                    placeholder="e.g. 2026, or June 2026"
+                    style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff' }}
+                  />
+                </div>
+
+                {/* Rating Teamwork */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span style={{ color: '#94a3b8' }}>Teamwork & Behavior (১-৫)</span>
+                    <span style={{ color: '#a5b4fc', fontWeight: 600 }}>⭐ {evalTeamwork} / 5</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="5" 
+                    step="0.1"
+                    value={evalTeamwork}
+                    onChange={(e) => setEvalTeamwork(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: 'var(--primary)' }}
+                  />
+                </div>
+
+                {/* Rating Rules */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span style={{ color: '#94a3b8' }}>Rules & Office Culture (১-৫)</span>
+                    <span style={{ color: '#a5b4fc', fontWeight: 600 }}>⭐ {evalRules} / 5</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="5" 
+                    step="0.1"
+                    value={evalRules}
+                    onChange={(e) => setEvalRules(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: 'var(--primary)' }}
+                  />
+                </div>
+
+                {/* Rating Helping */}
+                <div style={{ marginBottom: '1.25rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span style={{ color: '#94a3b8' }}>Helping Others (১-৫)</span>
+                    <span style={{ color: '#a5b4fc', fontWeight: 600 }}>⭐ {evalHelping} / 5</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="5" 
+                    step="0.1"
+                    value={evalHelping}
+                    onChange={(e) => setEvalHelping(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: 'var(--primary)' }}
+                  />
+                </div>
+
+                {/* Feedback notes */}
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '6px' }}>Remarks / Feedback (ফিডব্যক/মন্তব্য)</label>
+                  <textarea 
+                    value={evalNotes}
+                    onChange={(e) => setEvalNotes(e.target.value)}
+                    placeholder="Enter employee performance review notes..."
+                    rows="3"
+                    style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', resize: 'vertical', fontFamily: 'inherit' }}
+                  />
+                </div>
+
+                <button 
+                  onClick={async () => {
+                    const finalUser = evalUser || (users.length > 0 ? users[0].name : '');
+                    if (!finalUser) {
+                      setEvalMsg('Please select a member first.');
+                      return;
+                    }
+                    setEvalSubmitting(true);
+                    setEvalMsg('');
+                    const success = await submitEvaluation(finalUser, evalTeamwork, evalRules, evalHelping, evalPeriod, evalNotes);
+                    setEvalSubmitting(false);
+                    if (success) {
+                      setEvalMsg('✅ Evaluation submitted successfully!');
+                      setEvalNotes('');
+                    } else {
+                      setEvalMsg('❌ Submission failed. Check Master API connection.');
+                    }
+                  }}
+                  disabled={evalSubmitting}
+                  style={{ width: '100%', padding: '0.75rem', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  {evalSubmitting ? 'Submitting...' : 'Submit Rating'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Wrap App with ErrorBoundary for export
+function AppWithErrorBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}
+
+export default AppWithErrorBoundary;
