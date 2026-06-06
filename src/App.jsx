@@ -192,9 +192,14 @@ function App() {
   const [evalSubmitting, setEvalSubmitting] = useState(false);
   const [evalMsg, setEvalMsg] = useState('');
 
-  const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('elab_api_url') || '');
+  const DEFAULT_API_URL = 'https://script.google.com/macros/s/AKfycbzQpsKJUdyFc4UbUUW85Mg_TOexl7gsM2VkSyq58pKzY_aJEVLqSEGsqFuzr3nCcn/exec';
+  const [apiUrl, setApiUrl] = useState(() => localStorage.getItem('elab_api_url') || DEFAULT_API_URL);
   const [salesApiUrl, setSalesApiUrl] = useState(() => localStorage.getItem('elab_sales_api_url') || '');
-  const [useMock, setUseMock] = useState(() => !localStorage.getItem('elab_api_url'));
+  const [useMock, setUseMock] = useState(() => {
+    const saved = localStorage.getItem('elab_api_url');
+    if (saved === '') return true;
+    return false;
+  });
 
   const [newUserName, setNewUserName] = useState('');
   const [newUserRole, setNewUserRole] = useState('Researcher');
