@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { LayoutDashboard, Users, Activity, CheckCircle, FileText, UserPlus, Settings, Hash, Bell, Plus, Clock, Trash2, Globe, Camera } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, CheckCircle, FileText, UserPlus, Settings, Hash, Bell, Plus, Clock, Trash2, Globe, Camera, Menu, X } from 'lucide-react';
 import { format, subDays, parseISO, isToday, isYesterday, isThisWeek, isThisMonth, subMonths, isSameDay } from 'date-fns';
 import './index.css';
 
@@ -208,6 +208,8 @@ function App() {
   const fileInputRef = useRef(null);
   const editFileInputRef = useRef(null);
   const [editingPhotoUserId, setEditingPhotoUserId] = useState(null);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [mobileFeedOpen, setMobileFeedOpen] = useState(false);
 
   useEffect(() => {
     localStorage.setItem('elab_users', JSON.stringify(users));
@@ -762,15 +764,23 @@ function App() {
 
   return (
     <div className="app-container">
+      {(mobileSidebarOpen || mobileFeedOpen) && (
+        <div className="mobile-overlay" onClick={() => { setMobileSidebarOpen(false); setMobileFeedOpen(false); }}></div>
+      )}
       
       {/* 1. SIDEBAR */}
-      <div className="sidebar">
-        <div className="sidebar-header">
-          <h1>eLab Analytics</h1>
-          <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>Workspace</p>
+      <div className={`sidebar ${mobileSidebarOpen ? 'mobile-open' : ''}`}>
+        <div className="sidebar-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h1>eLab Analytics</h1>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '4px' }}>Workspace</p>
+          </div>
+          <button className="mobile-close-btn" onClick={() => setMobileSidebarOpen(false)} style={{ display: 'none' }}>
+            <X size={18} />
+          </button>
         </div>
 
-        <div className="sidebar-group" style={{ marginTop: 0 }}>
+        <div className="sidebar-group" style={{ marginTop: 0 }} onClick={() => setMobileSidebarOpen(false)}>
           <div 
             className={`sidebar-item ${activeTabId === 'global' ? 'active' : ''}`}
             onClick={() => setActiveTabId('global')}
@@ -835,7 +845,7 @@ function App() {
           ))}
         </div>
 
-        <div className="sidebar-group">
+        <div className="sidebar-group" onClick={() => setMobileSidebarOpen(false)}>
           <div className="sidebar-group-title">
             <span>Uploaders</span>
             <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />
@@ -853,7 +863,7 @@ function App() {
           ))}
         </div>
 
-        <div style={{ marginTop: 'auto', padding: '1rem 1.5rem' }}>
+        <div style={{ marginTop: 'auto', padding: '1rem 1.5rem' }} onClick={() => setMobileSidebarOpen(false)}>
           <div className="sidebar-item" onClick={() => setShowSettings(true)} style={{ background: 'rgba(255,255,255,0.05)' }}>
             <Settings size={18} />
             <span>Settings & Setup</span>
@@ -863,6 +873,17 @@ function App() {
 
       {/* 2. MAIN DASHBOARD CONTENT */}
       <div className="main-content" style={{ position: 'relative' }}>
+        {/* Mobile Top Navigation */}
+        <div className="mobile-top-bar">
+          <button onClick={() => setMobileSidebarOpen(true)} className="mobile-toggle-btn">
+            <Menu size={20} />
+          </button>
+          <span style={{ fontWeight: 600, fontSize: '1.1rem', color: '#fff' }}>eLab Analytics</span>
+          <button onClick={() => setMobileFeedOpen(true)} className="mobile-toggle-btn">
+            <Bell size={20} />
+          </button>
+        </div>
+
         {loading && <div className="top-loading-bar"></div>}
         <div className="content-header">
           <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
@@ -1446,10 +1467,15 @@ function App() {
       </div>
 
       {/* 3. LIVE ACTIVITY FEED */}
-      <div className="feed-panel">
-        <div className="feed-title">
-          <Bell size={20} color="#a5b4fc" />
-          Live Activity Feed
+      <div className={`feed-panel ${mobileFeedOpen ? 'mobile-open' : ''}`}>
+        <div className="feed-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <Bell size={20} color="#a5b4fc" />
+            Live Activity Feed
+          </span>
+          <button className="mobile-close-btn" onClick={() => setMobileFeedOpen(false)} style={{ display: 'none' }}>
+            <X size={18} />
+          </button>
         </div>
         <div className="feed-list">
           {feed.slice(0, 50).map(item => (
