@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { LayoutDashboard, Users, Activity, CheckCircle, FileText, UserPlus, Settings, Hash, Bell, Plus, Clock, Trash2, Globe, Camera, Menu, X } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, CheckCircle, FileText, UserPlus, Settings, Hash, Bell, Plus, Clock, Trash2, Globe, Camera, Menu, X, RefreshCw } from 'lucide-react';
 import { format, subDays, parseISO, isToday, isYesterday, isThisWeek, isThisMonth, subMonths, isSameDay } from 'date-fns';
 import './index.css';
 
@@ -211,6 +211,7 @@ function App() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mobileFeedOpen, setMobileFeedOpen] = useState(false);
   const hasSyncedUsersRef = useRef(false);
+  const [countdown, setCountdown] = useState(30);
 
   useEffect(() => {
     const saved = localStorage.getItem('elab_api_url');
@@ -381,7 +382,20 @@ function App() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000);
+    setCountdown(30); // Reset countdown on manual switch
+  }, [useMock, apiUrl, salesApiUrl, activeTabId]);
+
+  useEffect(() => {
+    if (useMock || !apiUrl) return;
+    const interval = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          fetchData();
+          return 30;
+        }
+        return prev - 1;
+      });
+    }, 1000);
     return () => clearInterval(interval);
   }, [useMock, apiUrl, salesApiUrl, activeTabId]);
 
@@ -927,7 +941,7 @@ function App() {
                 ) : (
                   <span style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                     <span className={`status-dot ${loading ? 'syncing' : 'live'}`}></span>
-                    {loading ? 'Syncing...' : 'Live Mode'}
+                    {loading ? 'Syncing...' : `Live Mode (Sync in ${countdown}s)`}
                   </span>
                 )}
               </p>
@@ -935,7 +949,7 @@ function App() {
           </div>
           
           {/* Time Filter Toggle */}
-          <div style={{ display: 'flex', background: 'rgba(15,23,42,0.6)', borderRadius: '8px', padding: '4px', border: '1px solid var(--glass-border)', flexWrap: 'wrap', gap: '4px' }}>
+          <div style={{ display: 'flex', background: 'rgba(15,23,42,0.6)', borderRadius: '8px', padding: '4px', border: '1px solid var(--glass-border)', flexWrap: 'wrap', gap: '4px', alignItems: 'center' }}>
             {['Today', 'Yesterday', 'This Week', 'This Month', 'Last Month', 'All Time'].map(filter => (
               <button
                 key={filter}
@@ -954,6 +968,28 @@ function App() {
                 {filter}
               </button>
             ))}
+            <button
+              onClick={() => { fetchData(); setCountdown(30); }}
+              disabled={loading}
+              style={{
+                background: 'rgba(255,255,255,0.05)',
+                color: '#fff',
+                border: 'none',
+                padding: '0.5rem',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.2s',
+                marginLeft: '4px',
+                height: '34px',
+                width: '34px'
+              }}
+              title="Refresh Data"
+            >
+              <RefreshCw size={14} className={loading ? 'spinning' : ''} />
+            </button>
           </div>
         </div>
 
