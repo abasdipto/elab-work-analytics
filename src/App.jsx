@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
-import { LayoutDashboard, Users, Activity, CheckCircle, FileText, UserPlus, Settings, Hash, Bell, Plus, Clock, Trash2, Globe, Camera, Menu, X, RefreshCw } from 'lucide-react';
+import { LayoutDashboard, Users, Activity, CheckCircle, FileText, UserPlus, Settings, Hash, Bell, Plus, Clock, Trash2, Globe, Camera, Menu, X, RefreshCw, BarChart2 } from 'lucide-react';
 import { format, subDays, parseISO, isToday, isYesterday, isThisWeek, isThisMonth, subMonths, isSameDay } from 'date-fns';
 import './index.css';
 
@@ -152,14 +152,128 @@ const formatPoints = (val) => {
   return val.toFixed(2);
 };
 
+const MOTIVATIONAL_QUOTES = [
+  { text: "The only way to do great work is to love what you do.", author: "Steve Jobs" },
+  { text: "Productivity is never an accident. It is always the result of a commitment to excellence, intelligent planning, and focused effort.", author: "Paul J. Meyer" },
+  { text: "It is not that I am so smart, it is just that I stay with problems longer.", author: "Albert Einstein" },
+  { text: "Your talent determines what you can do. Your motivation determines how much you are willing to do. Your attitude determines how well you do it.", author: "Lou Holtz" },
+  { text: "Quality is not an act, it is a habit.", author: "Aristotle" },
+  { text: "Believe you can and you're halfway there.", author: "Theodore Roosevelt" },
+  { text: "It always seems impossible until it's done.", author: "Nelson Mandela" },
+  { text: "Focus on being productive instead of busy.", author: "Tim Ferriss" },
+  { text: "Action is the foundational key to all success.", author: "Pablo Picasso" },
+  { text: "Don't watch the clock; do what it does. Keep going.", author: "Sam Levenson" }
+];
+
+const APP_COLORS = {
+  chrome: '#3b82f6',
+  firefox: '#fb923c',
+  msedge: '#22d3ee',
+  code: '#a5b4fc', // VS Code
+  cmd: '#10b981',
+  powershell: '#10b981',
+  discord: '#818cf8',
+  slack: '#ec4899',
+  spotify: '#1db954',
+  excel: '#107c41',
+  winword: '#2b579a',
+  explorer: '#f59e0b',
+  electron: '#61dafb'
+};
+
+const getAppColor = (appName) => {
+  const lower = appName.toLowerCase();
+  for (const key of Object.keys(APP_COLORS)) {
+    if (lower.includes(key)) return APP_COLORS[key];
+  }
+  let hash = 0;
+  for (let i = 0; i < appName.length; i++) {
+    hash = appName.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const c = (hash & 0x00FFFFFF).toString(16).toUpperCase();
+  return '#' + '00000'.substring(0, 6 - c.length) + c;
+};
+
+// Component to dynamically fetch and display raw images from Github (handles private repos via headers)
+function GithubImage({ downloadUrl, token, alt, style, className }) {
+  const [src, setSrc] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    if (!downloadUrl) return;
+    let isMounted = true;
+    setLoading(true);
+    setError(false);
+
+    const fetchImage = async () => {
+      try {
+        const headers = {};
+        if (token) {
+          headers['Authorization'] = `token ${token}`;
+        }
+        const res = await fetch(downloadUrl, { headers });
+        if (!res.ok) throw new Error("Failed to load image");
+        const blob = await res.blob();
+        if (isMounted) {
+          const url = URL.createObjectURL(blob);
+          setSrc(url);
+          setLoading(false);
+        }
+      } catch (err) {
+        console.error("Failed to load github image:", err);
+        if (isMounted) {
+          setError(true);
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchImage();
+
+    return () => {
+      isMounted = false;
+      if (src) {
+        URL.revokeObjectURL(src);
+      }
+    };
+  }, [downloadUrl, token]);
+
+  if (loading) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', ...style }} className={className}>
+        <div className="spinner" style={{ width: '20px', height: '20px' }}></div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)', color: '#fca5a5', borderRadius: '8px', fontSize: '0.8rem', padding: '10px', textAlign: 'center', ...style }} className={className}>
+        Failed to load
+      </div>
+    );
+  }
+
+  return <img src={src} alt={alt} style={style} className={className} />;
+}
+
 function App() {
-  const [passcode, setPasscode] = useState('');
-  const [isAuthenticated, setIsAuthenticated] = useState(() => {
-    // Bypass passcode authentication inside the Electron desktop app
-    const isElectron = navigator.userAgent.toLowerCase().includes('electron');
-    if (isElectron) return true;
-    return sessionStorage.getItem('elab_authenticated') === 'true';
+  const isElectron = typeof window !== 'undefined' && navigator.userAgent.toLowerCase().includes('electron');
+  
+  // App modes: 'select' (Electron selection), 'dashboard_auth' (Passcode screen), 'dashboard' (Dashboard view), 'worker_portal' (Worker view)
+  const [appMode, setAppMode] = useState(() => {
+    if (isElectron) {
+      return sessionStorage.getItem('elab_app_mode') || 'select';
+    }
+    return sessionStorage.getItem('elab_authenticated') === 'true' ? 'dashboard' : 'dashboard_auth';
   });
+
+  const [userRole, setUserRole] = useState(() => {
+    return sessionStorage.getItem('elab_user_role') || null;
+  });
+
+  const [passcode, setPasscode] = useState('');
   const [passcodeError, setPasscodeError] = useState(false);
 
   const [data, setData] = useState([]);
@@ -213,6 +327,144 @@ function App() {
   const hasSyncedUsersRef = useRef(false);
   const [countdown, setCountdown] = useState(30);
 
+  // Worker Tracking states
+  const [selectedWorkerId, setSelectedWorkerId] = useState(() => localStorage.getItem('elab_worker_id') || '');
+  const [isTracking, setIsTracking] = useState(() => localStorage.getItem('elab_is_tracking') === 'true');
+  const [trackingSeconds, setTrackingSeconds] = useState(() => Number(localStorage.getItem('elab_tracking_seconds') || 0));
+  const [currentQuote, setCurrentQuote] = useState(() => {
+    const saved = localStorage.getItem('elab_current_quote');
+    return saved ? JSON.parse(saved) : MOTIVATIONAL_QUOTES[0];
+  });
+  const [lastTrackedWindow, setLastTrackedWindow] = useState('');
+  
+  // GitHub config states
+  const [githubToken, setGithubToken] = useState(() => localStorage.getItem('elab_github_token') || '');
+  const [githubRepo, setGithubRepo] = useState(() => localStorage.getItem('elab_github_repo') || '');
+
+  // Admin Dashboard tracking visualization states
+  const [trackerDate, setTrackerDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [screenshots, setScreenshots] = useState([]);
+  const [screenshotLoading, setScreenshotLoading] = useState(false);
+  const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [activeScreenshot, setActiveScreenshot] = useState(null);
+  const [activityLogs, setActivityLogs] = useState([]);
+
+  // 1. Timer ticking effect
+  useEffect(() => {
+    let interval = null;
+    if (isTracking) {
+      interval = setInterval(() => {
+        setTrackingSeconds(prev => {
+          const next = prev + 1;
+          localStorage.setItem('elab_tracking_seconds', String(next));
+          return next;
+        });
+      }, 1000);
+    } else {
+      clearInterval(interval);
+    }
+    return () => clearInterval(interval);
+  }, [isTracking]);
+
+  // 2. Periodic log harvesting every 5 minutes while tracking
+  useEffect(() => {
+    if (!isTracking || !isElectron) return;
+    
+    const harvestInterval = setInterval(async () => {
+      try {
+        const result = await window.require('electron').ipcRenderer.invoke('harvest-activity-log');
+        if (result && Object.keys(result).length > 0 && apiUrl) {
+          const selectedWorker = users.find(u => u.id === selectedWorkerId);
+          if (selectedWorker) {
+            const payload = {
+              time: new Date().toISOString(),
+              type: 'ActivityLog',
+              user: selectedWorker.name,
+              value: JSON.stringify(result),
+              sheetUrl: ''
+            };
+            await fetch(apiUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+              body: JSON.stringify(payload)
+            });
+            console.log("Uploaded periodic activity log:", result);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to harvest activity log:", err);
+      }
+    }, 5 * 60 * 1000);
+    
+    return () => clearInterval(harvestInterval);
+  }, [isTracking, selectedWorkerId, users, apiUrl]);
+
+  // 3. Real-time active window title checks in UI
+  useEffect(() => {
+    if (!isTracking || !isElectron) return;
+    
+    const statusInterval = setInterval(async () => {
+      try {
+        const { lastActiveWindow } = await window.require('electron').ipcRenderer.invoke('get-current-activity');
+        if (lastActiveWindow) {
+          setLastTrackedWindow(`${lastActiveWindow.app} - ${lastActiveWindow.title}`);
+        }
+      } catch (err) {
+        // ignore
+      }
+    }, 5000);
+    
+    return () => clearInterval(statusInterval);
+  }, [isTracking]);
+
+  // 4. Fetch screenshots when selected user or date changes
+  const activeUser = activeTabId === 'global' ? null : users.find(u => u.id === activeTabId);
+  useEffect(() => {
+    if (activeUser && activeTabId !== 'global' && githubToken && githubRepo) {
+      fetchScreenshots(activeUser.name, trackerDate);
+    }
+  }, [activeTabId, trackerDate, githubToken, githubRepo]);
+
+  const fetchScreenshots = async (workerName, dateStr) => {
+    if (!githubToken || !githubRepo || !workerName) return;
+    setScreenshotLoading(true);
+    try {
+      const url = `https://api.github.com/repos/${githubRepo}/contents/screenshots/${workerName}/${dateStr}`;
+      const res = await fetch(url, {
+        headers: {
+          'Authorization': `token ${githubToken}`,
+          'Accept': `application/vnd.github.v3+json`
+        }
+      });
+      if (res.ok) {
+        const files = await res.json();
+        if (Array.isArray(files)) {
+          const mapped = files
+            .filter(f => f.name.endsWith('.jpg') || f.name.endsWith('.png'))
+            .map(f => {
+              const timePart = f.name.replace('.jpg', '').replace('.png', '').replace(/-/g, ':');
+              return {
+                name: f.name,
+                timeStr: timePart,
+                path: f.path,
+                downloadUrl: f.download_url
+              };
+            });
+          setScreenshots(mapped);
+        } else {
+          setScreenshots([]);
+        }
+      } else {
+        setScreenshots([]);
+      }
+    } catch (err) {
+      console.error("Error fetching screenshots:", err);
+      setScreenshots([]);
+    } finally {
+      setScreenshotLoading(false);
+    }
+  };
+
   useEffect(() => {
     const saved = localStorage.getItem('elab_api_url');
     const oldPlaceholder = 'https://script.google.com/macros/s/AKfycbzQpsKJUdyFc4UbUUW85Mg_TOexl7gsM2VkSyq58pKzY_aJEVLqSEGsqFuzr3nCcn/exec';
@@ -259,6 +511,31 @@ function App() {
       setEvaluations([
         { id: 101, user: 'Demo Researcher', evaluator: 'Admin', period: '2026', teamwork: 4.5, rules: 4.2, helping: 4.8, notes: 'Very helpful team member, always follows the office rules.', time: new Date().toISOString() },
         { id: 102, user: 'Demo Marketer', evaluator: 'Admin', period: '2026', teamwork: 4.0, rules: 4.5, helping: 4.0, notes: 'Good marketing work, communicates well with team members.', time: new Date().toISOString() }
+      ]);
+      setActivityLogs([
+        {
+          id: 991,
+          time: new Date().toISOString(),
+          type: 'ActivityLog',
+          user: 'Demo Researcher',
+          detail: JSON.stringify({
+            "VS Code": 7200,
+            "Google Chrome": 3600,
+            "Slack": 1800,
+            "Zoom": 1200
+          })
+        },
+        {
+          id: 992,
+          time: new Date().toISOString(),
+          type: 'ActivityLog',
+          user: 'Demo Marketer',
+          detail: JSON.stringify({
+            "Google Chrome": 9000,
+            "WhatsApp": 2400,
+            "Excel": 1800
+          })
+        }
       ]);
       return;
     }
@@ -318,11 +595,30 @@ function App() {
         }
       }
 
+      // Find latest ConfigUpdate to sync settings from cloud
+      const configUpdateRecord = formattedFeed.find(f => safeLower(f.type).trim() === 'configupdate');
+      if (configUpdateRecord) {
+        const parsedConfig = safeJsonParse(configUpdateRecord.detail);
+        if (parsedConfig) {
+          if (parsedConfig.githubToken) {
+            setGithubToken(parsedConfig.githubToken);
+            localStorage.setItem('elab_github_token', parsedConfig.githubToken);
+          }
+          if (parsedConfig.githubRepo) {
+            setGithubRepo(parsedConfig.githubRepo);
+            localStorage.setItem('elab_github_repo', parsedConfig.githubRepo);
+          }
+        }
+      }
+
       const normalFeed = formattedFeed.filter(f => {
         const type = safeLower(f.type).trim();
-        return type !== 'evaluation' && type !== 'memberupdate';
+        return type !== 'evaluation' && type !== 'memberupdate' && type !== 'configupdate' && type !== 'activitylog';
       });
       setFeed(normalFeed);
+
+      const logs = formattedFeed.filter(f => safeLower(f.type).trim() === 'activitylog');
+      setActivityLogs(logs);
 
       const chartData = Array.from({ length: 7 }).map((_, i) => {
         const date = subDays(new Date(), 6 - i);
@@ -428,6 +724,31 @@ function App() {
       });
     } catch (err) {
       console.error('Failed to sync users list to cloud:', err);
+    }
+  };
+
+  const saveConfigToCloud = async (token, repo) => {
+    localStorage.setItem('elab_github_token', token);
+    localStorage.setItem('elab_github_repo', repo);
+    setGithubToken(token);
+    setGithubRepo(repo);
+
+    if (useMock || !apiUrl) return;
+    try {
+      const payload = {
+        type: 'ConfigUpdate',
+        user: 'System',
+        time: new Date().toISOString(),
+        detail: JSON.stringify({ githubToken: token, githubRepo: repo }),
+        sheetUrl: ''
+      };
+      await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(payload)
+      });
+    } catch (err) {
+      console.error('Failed to sync config to cloud:', err);
     }
   };
 
@@ -624,7 +945,6 @@ function App() {
     }).sort((a, b) => b.points - a.points);
   };
 
-  const activeUser = activeTabId === 'global' ? null : users.find(u => u.id === activeTabId);
 
   // --- FILTER LOGIC ---
   // If global, we filter feed based on timeFilter to calculate stats
@@ -708,11 +1028,22 @@ function App() {
     }
   }
 
+  // --- Passcode handler (supports admin + viewer) ---
   const handlePasscodeSubmit = (e) => {
     e.preventDefault();
-    if (passcode === 'elab2026') {
-      setIsAuthenticated(true);
+    if (passcode === 'admin2026') {
+      setUserRole('admin');
+      setAppMode('dashboard');
       sessionStorage.setItem('elab_authenticated', 'true');
+      sessionStorage.setItem('elab_user_role', 'admin');
+      sessionStorage.setItem('elab_app_mode', 'dashboard');
+      setPasscodeError(false);
+    } else if (passcode === 'elab2026') {
+      setUserRole('viewer');
+      setAppMode('dashboard');
+      sessionStorage.setItem('elab_authenticated', 'true');
+      sessionStorage.setItem('elab_user_role', 'viewer');
+      sessionStorage.setItem('elab_app_mode', 'dashboard');
       setPasscodeError(false);
     } else {
       setPasscodeError(true);
@@ -720,7 +1051,158 @@ function App() {
     }
   };
 
-  if (!isAuthenticated) {
+  // --- Worker tracking handlers ---
+  const handleStartTracking = async () => {
+    if (!isElectron) return;
+    const selectedWorker = users.find(u => u.id === selectedWorkerId);
+    if (!selectedWorker) return;
+    try {
+      await window.require('electron').ipcRenderer.invoke('start-tracker', {
+        workerName: selectedWorker.name,
+        token: githubToken,
+        repo: githubRepo
+      });
+      setIsTracking(true);
+      localStorage.setItem('elab_is_tracking', 'true');
+      // Minimize window
+      await window.require('electron').ipcRenderer.invoke('minimize-window');
+    } catch (err) {
+      console.error('Failed to start tracker:', err);
+    }
+  };
+
+  const handleStopTracking = async () => {
+    if (!isElectron) return;
+    try {
+      const result = await window.require('electron').ipcRenderer.invoke('stop-tracker');
+      setIsTracking(false);
+      localStorage.setItem('elab_is_tracking', 'false');
+      // Upload final activity log
+      if (result?.log && Object.keys(result.log).length > 0 && apiUrl) {
+        const selectedWorker = users.find(u => u.id === selectedWorkerId);
+        if (selectedWorker) {
+          const payload = {
+            time: new Date().toISOString(),
+            type: 'ActivityLog',
+            user: selectedWorker.name,
+            value: JSON.stringify(result.log),
+            sheetUrl: ''
+          };
+          await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            body: JSON.stringify(payload)
+          });
+        }
+      }
+    } catch (err) {
+      console.error('Failed to stop tracker:', err);
+    }
+  };
+
+  const handleWorkerLogin = () => {
+    if (!selectedWorkerId) return;
+    const quote = MOTIVATIONAL_QUOTES[Math.floor(Math.random() * MOTIVATIONAL_QUOTES.length)];
+    setCurrentQuote(quote);
+    localStorage.setItem('elab_current_quote', JSON.stringify(quote));
+    setTrackingSeconds(0);
+    localStorage.setItem('elab_tracking_seconds', '0');
+    setAppMode('worker_portal');
+    sessionStorage.setItem('elab_app_mode', 'worker_portal');
+  };
+
+  const handleWorkerLogout = async () => {
+    if (isTracking) {
+      await handleStopTracking();
+    }
+    setAppMode('select');
+    sessionStorage.setItem('elab_app_mode', 'select');
+    setSelectedWorkerId('');
+    localStorage.removeItem('elab_worker_id');
+    setTrackingSeconds(0);
+    localStorage.setItem('elab_tracking_seconds', '0');
+  };
+
+  const formatTimer = (totalSeconds) => {
+    const h = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
+    const m = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
+    const s = (totalSeconds % 60).toString().padStart(2, '0');
+    return `${h}:${m}:${s}`;
+  };
+
+  // ==========================================
+  // RENDER: Mode Selection Screen (Electron only)
+  // ==========================================
+  if (appMode === 'select') {
+    return (
+      <div className="select-mode-container">
+        <div className="select-mode-content">
+          <div className="select-mode-header">
+            <h1 className="select-mode-title">
+              <span className="pulse-dot"></span>
+              eLab Work Analytics
+            </h1>
+            <p style={{ color: '#94a3b8', marginTop: '0.75rem', fontSize: '1rem' }}>Choose how you'd like to use the app today</p>
+          </div>
+
+          <div className="select-mode-cards">
+            {/* Dashboard Card */}
+            <div className="glass-panel mode-card" onClick={() => { setAppMode('dashboard_auth'); sessionStorage.setItem('elab_app_mode', 'dashboard_auth'); }}>
+              <div className="mode-icon-wrapper blue">
+                <LayoutDashboard size={32} />
+              </div>
+              <h3 className="mode-title">View Dashboard</h3>
+              <p className="mode-desc">Access team analytics, leaderboards, performance reports and live activity feeds.</p>
+              <button className="mode-btn blue">Open Dashboard →</button>
+            </div>
+
+            {/* Worker Card */}
+            <div className="glass-panel mode-card">
+              <div className="mode-icon-wrapper green">
+                <Clock size={32} />
+              </div>
+              <h3 className="mode-title">Start Working</h3>
+              <p className="mode-desc">Clock in, track your work hours, and let the system capture your activity automatically.</p>
+              <div style={{ width: '100%' }}>
+                <select
+                  value={selectedWorkerId}
+                  onChange={(e) => { setSelectedWorkerId(e.target.value); localStorage.setItem('elab_worker_id', e.target.value); }}
+                  style={{
+                    width: '100%',
+                    padding: '0.6rem',
+                    borderRadius: '8px',
+                    border: '1px solid var(--glass-border)',
+                    background: '#0f172a',
+                    color: '#fff',
+                    marginBottom: '0.75rem',
+                    fontSize: '0.9rem'
+                  }}
+                >
+                  <option value="">-- Select your name --</option>
+                  {users.map(u => (
+                    <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+                  ))}
+                </select>
+                <button
+                  className="mode-btn green"
+                  disabled={!selectedWorkerId}
+                  style={{ opacity: selectedWorkerId ? 1 : 0.5, cursor: selectedWorkerId ? 'pointer' : 'not-allowed' }}
+                  onClick={handleWorkerLogin}
+                >
+                  Clock In →
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================
+  // RENDER: Passcode Auth Screen
+  // ==========================================
+  if (appMode === 'dashboard_auth') {
     return (
       <div style={{
         display: 'flex',
@@ -792,6 +1274,92 @@ function App() {
               Access Dashboard
             </button>
           </form>
+
+          {isElectron && (
+            <button
+              onClick={() => { setAppMode('select'); sessionStorage.setItem('elab_app_mode', 'select'); setPasscodeError(false); setPasscode(''); }}
+              style={{ marginTop: '1.5rem', background: 'none', border: 'none', color: '#64748b', cursor: 'pointer', fontSize: '0.85rem' }}
+            >
+              ← Back to Mode Selection
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // ==========================================
+  // RENDER: Worker Portal
+  // ==========================================
+  if (appMode === 'worker_portal') {
+    const selectedWorker = users.find(u => u.id === selectedWorkerId);
+    return (
+      <div className="worker-portal-container">
+        <div className="glass-panel worker-portal-card">
+          <div className="worker-portal-header">
+            <div className="worker-title-area">
+              {selectedWorker && <Avatar user={selectedWorker} size={48} />}
+              <div>
+                <h2 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#fff' }}>
+                  Welcome, {selectedWorker?.name || 'Worker'}!
+                </h2>
+                <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  {selectedWorker?.role} • {new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Quote of the Day */}
+          <div className="quote-card">
+            <div style={{ position: 'absolute', top: '-12px', left: '16px', background: 'var(--primary)', color: '#fff', padding: '2px 12px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 600 }}>💡 Quote of the Day</div>
+            <p className="quote-text">"{currentQuote.text}"</p>
+            <p className="quote-author">— {currentQuote.author}</p>
+          </div>
+
+          {/* Timer */}
+          <div className="timer-section">
+            <div className={`timer-digits ${isTracking ? 'active' : ''}`}>
+              {formatTimer(trackingSeconds)}
+            </div>
+            <div className={`timer-status ${isTracking ? 'active' : ''}`}>
+              {isTracking && <span className="pulse-dot" style={{ width: '8px', height: '8px' }}></span>}
+              {isTracking ? 'Tracking Active' : 'Ready to Start'}
+            </div>
+
+            {isTracking && lastTrackedWindow && (
+              <div className="active-window-indicator">
+                🖥️ {lastTrackedWindow}
+              </div>
+            )}
+          </div>
+
+          {/* Control Buttons */}
+          <div className="worker-control-buttons">
+            {!isTracking ? (
+              <button
+                className="mode-btn green"
+                style={{ gridColumn: 'span 2' }}
+                onClick={handleStartTracking}
+              >
+                ▶ Start Tracking
+              </button>
+            ) : (
+              <button
+                className="mode-btn"
+                style={{ gridColumn: 'span 2', background: 'linear-gradient(135deg, #f59e0b, #d97706)', boxShadow: '0 4px 12px rgba(245,158,11,0.3)' }}
+                onClick={handleStopTracking}
+              >
+                ⏸ Pause Tracking
+              </button>
+            )}
+            <button
+              className="mode-btn worker-logout-btn"
+              onClick={handleWorkerLogout}
+            >
+              ← Log Out
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -829,7 +1397,7 @@ function App() {
         <div className="sidebar-group">
           <div className="sidebar-group-title">
             <span>Researchers</span>
-            <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />
+            {userRole === 'admin' && <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />}
           </div>
           {users.filter(u => u.role === 'Researcher').map(user => (
             <div 
@@ -847,7 +1415,7 @@ function App() {
         <div className="sidebar-group">
           <div className="sidebar-group-title">
             <span>Marketers</span>
-            <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />
+            {userRole === 'admin' && <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />}
           </div>
           {users.filter(u => u.role === 'Marketer').map(user => (
             <div 
@@ -865,7 +1433,7 @@ function App() {
         <div className="sidebar-group">
           <div className="sidebar-group-title">
             <span>Designers</span>
-            <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />
+            {userRole === 'admin' && <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />}
           </div>
           {users.filter(u => u.role === 'Designer').map(user => (
             <div 
@@ -883,7 +1451,7 @@ function App() {
         <div className="sidebar-group" onClick={() => setMobileSidebarOpen(false)}>
           <div className="sidebar-group-title">
             <span>Uploaders</span>
-            <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />
+            {userRole === 'admin' && <Plus size={14} style={{ cursor: 'pointer' }} onClick={() => setShowSettings(true)} />}
           </div>
           {users.filter(u => u.role === 'Uploader').map(user => (
             <div 
@@ -898,12 +1466,14 @@ function App() {
           ))}
         </div>
 
-        <div style={{ marginTop: 'auto', padding: '1rem 1.5rem' }} onClick={() => setMobileSidebarOpen(false)}>
-          <div className="sidebar-item" onClick={() => setShowSettings(true)} style={{ background: 'rgba(255,255,255,0.05)' }}>
-            <Settings size={18} />
-            <span>Settings & Setup</span>
+        {userRole === 'admin' && (
+          <div style={{ marginTop: 'auto', padding: '1rem 1.5rem' }} onClick={() => setMobileSidebarOpen(false)}>
+            <div className="sidebar-item" onClick={() => setShowSettings(true)} style={{ background: 'rgba(255,255,255,0.05)' }}>
+              <Settings size={18} />
+              <span>Settings & Setup</span>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
       {/* 2. MAIN DASHBOARD CONTENT */}
@@ -1519,6 +2089,141 @@ function App() {
                 </div>
               </div>
             )}
+
+            {/* 📸 Activity Screenshots & App/Website Usage Breakdown */}
+            {activeTabId !== 'global' && activeUser && (
+              <div className="dashboard-grid" style={{ marginTop: '2rem' }}>
+                {/* Screenshot Gallery */}
+                <div className="chart-container col-span-8" style={{ height: 'auto', minHeight: '350px' }}>
+                  <h3 className="chart-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Camera size={18} color="#a5b4fc" />
+                      📸 Work Screenshot Timeline
+                    </span>
+                    <input 
+                      type="date" 
+                      value={trackerDate}
+                      onChange={(e) => setTrackerDate(e.target.value)}
+                      style={{
+                        padding: '0.4rem 0.75rem',
+                        borderRadius: '6px',
+                        border: '1px solid var(--glass-border)',
+                        background: '#0f172a',
+                        color: '#fff',
+                        fontSize: '0.85rem'
+                      }}
+                    />
+                  </h3>
+
+                  {screenshotLoading ? (
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '200px' }}>
+                      <div className="spinner"></div>
+                    </div>
+                  ) : screenshots.length === 0 ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '220px', color: 'var(--text-muted)' }}>
+                      <Camera size={40} style={{ opacity: 0.3, marginBottom: '0.75rem' }} />
+                      <p>No screenshots uploaded for this worker on {trackerDate}.</p>
+                    </div>
+                  ) : (
+                    <div className="screenshot-timeline" style={{ marginTop: '1.25rem' }}>
+                      <div className="screenshot-grid">
+                        {screenshots.map((s, idx) => (
+                          <div 
+                            key={idx} 
+                            className="screenshot-thumb-wrapper"
+                            onClick={() => {
+                              setActiveScreenshot(s);
+                              setIsLightboxOpen(true);
+                            }}
+                          >
+                            <GithubImage 
+                              downloadUrl={s.downloadUrl} 
+                              token={githubToken} 
+                              alt={`Screenshot at ${s.timeStr}`}
+                              className="screenshot-thumbnail"
+                              style={{ width: '100%', height: '100px', objectFit: 'cover' }}
+                            />
+                            <div className="screenshot-time-badge">
+                              {s.timeStr}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* App/Website Usage Breakdown */}
+                <div className="chart-container col-span-4" style={{ height: 'auto', minHeight: '350px' }}>
+                  <h3 className="chart-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <BarChart2 size={18} color="#a5b4fc" />
+                    📊 App & Website Usage
+                  </h3>
+
+                  {(() => {
+                    const userLogs = activityLogs.filter(log => safeLower(log.user) === safeLower(activeUser.name));
+                    const appSeconds = {};
+                    let totalSeconds = 0;
+
+                    userLogs.forEach(log => {
+                      const logData = safeJsonParse(log.detail) || {};
+                      Object.keys(logData).forEach(appName => {
+                        const seconds = Number(logData[appName]) || 0;
+                        appSeconds[appName] = (appSeconds[appName] || 0) + seconds;
+                        totalSeconds += seconds;
+                      });
+                    });
+
+                    const apps = Object.keys(appSeconds).map(appName => ({
+                      name: appName,
+                      seconds: appSeconds[appName],
+                      color: getAppColor(appName)
+                    })).sort((a, b) => b.seconds - a.seconds);
+
+                    if (apps.length === 0) {
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '220px', color: 'var(--text-muted)' }}>
+                          <BarChart2 size={40} style={{ opacity: 0.3, marginBottom: '0.75rem' }} />
+                          <p>No activity logs recorded for this worker.</p>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="app-usage-container" style={{ marginTop: '1.25rem' }}>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginBottom: '1rem', textAlign: 'right' }}>
+                          Total Active Time: {formatTimer(totalSeconds)}
+                        </div>
+                        {apps.map((app, idx) => {
+                          const percent = totalSeconds > 0 ? (app.seconds / totalSeconds) * 100 : 0;
+                          return (
+                            <div key={idx} className="app-usage-row" style={{ marginBottom: '1.25rem' }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '4px' }}>
+                                <span style={{ color: '#fff', fontWeight: 500 }}>{app.name}</span>
+                                <span style={{ color: 'var(--text-muted)' }}>
+                                  {formatTimer(app.seconds)} ({percent.toFixed(0)}%)
+                                </span>
+                              </div>
+                              <div className="contribution-bar-bg" style={{ height: '8px' }}>
+                                <div 
+                                  className="contribution-bar-fill" 
+                                  style={{ 
+                                    width: `${percent}%`, 
+                                    backgroundColor: app.color,
+                                    boxShadow: `0 0 8px ${app.color}80`,
+                                    height: '8px'
+                                  }}
+                                ></div>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -1586,30 +2291,32 @@ function App() {
               >
                 ⚙️ API & Team
               </button>
-              <button 
-                onClick={() => { 
-                  setSettingsTab('evaluation'); 
-                  setEvalMsg(''); 
-                  if (users.length > 0 && !evalUser) {
-                    setEvalUser(users[0].name);
-                  }
-                }}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  color: settingsTab === 'evaluation' ? 'var(--primary)' : 'var(--text-muted)',
-                  borderBottom: settingsTab === 'evaluation' ? '2px solid var(--primary)' : '2px solid transparent',
-                  paddingBottom: '8px',
-                  fontWeight: 600,
-                  cursor: 'pointer',
-                  fontSize: '0.95rem'
-                }}
-              >
-                ⭐ Evaluate Member
-              </button>
+              {userRole === 'admin' && (
+                <button 
+                  onClick={() => { 
+                    setSettingsTab('evaluation'); 
+                    setEvalMsg(''); 
+                    if (users.length > 0 && !evalUser) {
+                      setEvalUser(users[0].name);
+                    }
+                  }}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: settingsTab === 'evaluation' ? 'var(--primary)' : 'var(--text-muted)',
+                    borderBottom: settingsTab === 'evaluation' ? '2px solid var(--primary)' : '2px solid transparent',
+                    paddingBottom: '8px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    fontSize: '0.95rem'
+                  }}
+                >
+                  ⭐ Evaluate Member
+                </button>
+              )}
             </div>
             
-            {settingsTab === 'config' ? (
+            {settingsTab === 'config' || userRole !== 'admin' ? (
               <>
                 <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem' }}>
                   <h3 style={{ fontSize: '1rem', color: '#a5b4fc', marginBottom: '0.5rem' }}>Master API URL</h3>
@@ -1643,6 +2350,36 @@ function App() {
                       Use Demo Data
                     </button>
                   </div>
+                </div>
+
+                <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem' }}>
+                  <h3 style={{ fontSize: '1rem', color: '#a5b4fc', marginBottom: '0.5rem' }}>GitHub Screenshot Storage</h3>
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>GitHub Storage Token</label>
+                    <input 
+                      type="password" 
+                      value={githubToken}
+                      onChange={(e) => setGithubToken(e.target.value)}
+                      placeholder="ghp_..."
+                      style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff' }}
+                    />
+                  </div>
+                  <div style={{ marginBottom: '1rem' }}>
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>GitHub Repository</label>
+                    <input 
+                      type="text" 
+                      value={githubRepo}
+                      onChange={(e) => setGithubRepo(e.target.value)}
+                      placeholder="owner/repo"
+                      style={{ width: '100%', padding: '0.75rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff' }}
+                    />
+                  </div>
+                  <button 
+                    onClick={() => saveConfigToCloud(githubToken, githubRepo)}
+                    style={{ width: '100%', padding: '0.5rem', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer' }}
+                  >
+                    Save GitHub Config
+                  </button>
                 </div>
 
                 <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px' }}>
@@ -1835,6 +2572,24 @@ function App() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Modal */}
+      {isLightboxOpen && activeScreenshot && (
+        <div className="lightbox-overlay" onClick={() => setIsLightboxOpen(false)}>
+          <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
+            <button className="lightbox-close" onClick={() => setIsLightboxOpen(false)}>✕</button>
+            <GithubImage 
+              downloadUrl={activeScreenshot.downloadUrl} 
+              token={githubToken} 
+              alt={`Screenshot at ${activeScreenshot.timeStr}`}
+              className="lightbox-image"
+            />
+            <div className="lightbox-caption">
+              Captured at {activeScreenshot.timeStr} on {trackerDate}
+            </div>
           </div>
         </div>
       )}

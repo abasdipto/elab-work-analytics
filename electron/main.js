@@ -1,6 +1,7 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { setupWorkerTrackerHandlers } from './worker_tracker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +29,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  setupWorkerTrackerHandlers();
   createWindow();
 
   app.on('activate', () => {
