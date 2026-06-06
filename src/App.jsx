@@ -210,6 +210,7 @@ function App() {
   const [editingPhotoUserId, setEditingPhotoUserId] = useState(null);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [mobileFeedOpen, setMobileFeedOpen] = useState(false);
+  const hasSyncedUsersRef = useRef(false);
 
   useEffect(() => {
     localStorage.setItem('elab_users', JSON.stringify(users));
@@ -293,6 +294,15 @@ function App() {
         if (Array.isArray(parsedUsers) && parsedUsers.length > 0) {
           setUsers(parsedUsers);
           localStorage.setItem('elab_users', JSON.stringify(parsedUsers));
+        }
+      } else {
+        // If there's no MemberUpdate record on the cloud yet, and we are running inside the desktop app (Electron),
+        // let's upload our current local users list (with photos) to the cloud so all other devices can sync!
+        const isElectron = navigator.userAgent.toLowerCase().includes('electron');
+        if (isElectron && users.length > 0 && !hasSyncedUsersRef.current) {
+          hasSyncedUsersRef.current = true;
+          console.log("No cloud users list found. Uploading local users list from desktop...");
+          saveUsersToCloud(users);
         }
       }
 
