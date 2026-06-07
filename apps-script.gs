@@ -280,3 +280,64 @@ function setupTrigger() {
     
   Logger.log('✅ Trigger setup completed successfully!');
 }
+
+// =====================================================================
+// ON OPEN - স্প্রেডশিট ওপেন হলে কাস্টম মেনু তৈরি করবে
+// =====================================================================
+function onOpen() {
+  SpreadsheetApp.getUi().createMenu('🔄 eLab Analytics')
+    .addItem('Sync Data Now', 'syncExistingData')
+    .addItem('Open Sync Sidebar', 'showSyncSidebar')
+    .addToUi();
+}
+
+// সাইডবার প্যানেল ওপেন করার ফাংশন
+function showSyncSidebar() {
+  const html = HtmlService.createHtmlOutput(
+    `<!DOCTYPE html>
+    <html>
+      <head>
+        <base target="_top">
+        <style>
+          body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background-color: #f8f9fa; color: #333; }
+          .btn { background-color: #1a73e8; color: white; border: none; padding: 12px 20px; font-size: 16px; font-weight: bold; border-radius: 4px; cursor: pointer; width: 100%; box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: background-color 0.2s; }
+          .btn:hover { background-color: #1557b0; }
+          .btn:disabled { background-color: #ccc; cursor: not-allowed; }
+          .status { margin-top: 15px; font-size: 14px; text-align: center; color: #666; font-weight: 500; }
+        </style>
+      </head>
+      <body>
+        <h3>eLab Work Analytics</h3>
+        <p style="font-size: 13px; color: #555;">ক্লিক করে আপনার কাজের ডাটা ড্যাশবোর্ডে সিঙ্ক করুন।</p>
+        <button class="btn" onclick="runSync()">🔄 Sync Data Now</button>
+        <div id="status" class="status"></div>
+
+        <script>
+          function runSync() {
+            const btn = document.querySelector('.btn');
+            const statusDiv = document.getElementById('status');
+            btn.disabled = true;
+            btn.innerText = 'Syncing...';
+            statusDiv.innerHTML = '⏳ সিঙ্ক হচ্ছে, অনুগ্রহ করে অপেক্ষা করুন...';
+            
+            google.script.run
+              .withSuccessHandler(function() {
+                btn.disabled = false;
+                btn.innerText = '🔄 Sync Data Now';
+                statusDiv.innerHTML = '✅ সিঙ্ক সফলভাবে সম্পন্ন হয়েছে!';
+              })
+              .withFailureHandler(function(err) {
+                btn.disabled = false;
+                btn.innerText = '🔄 Sync Data Now';
+                statusDiv.innerHTML = '❌ সিঙ্ক ব্যর্থ হয়েছে: <br>' + err.message;
+              })
+              .syncExistingData();
+          }
+        </script>
+      </body>
+    </html>`
+  )
+  .setTitle('eLab Sync Panel')
+  .setWidth(300);
+  SpreadsheetApp.getUi().showSidebar(html);
+}
