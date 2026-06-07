@@ -8,12 +8,18 @@ import './index.css';
 const safeStr = (val) => (val == null ? '' : String(val));
 const safeLower = (val) => safeStr(val).toLowerCase().trim();
 
-// Safe date parse - returns null for invalid dates
+// Safe date parse - handles ISO format AND Google Sheets local timestamp format (M/D/YYYY H:MM:SS)
 const safeParse = (dateStr) => {
   try {
     if (!dateStr) return null;
-    const d = parseISO(String(dateStr));
-    return isNaN(d.getTime()) ? null : d;
+    const s = String(dateStr).trim();
+    // Try ISO first (e.g. 2026-06-07T10:30:00.000Z or 2026-06-07T10:30:00)
+    const iso = parseISO(s);
+    if (!isNaN(iso.getTime())) return iso;
+    // Try Google Sheets format: M/D/YYYY H:MM:SS or M/D/YYYY H:MM:SS AM/PM
+    const d = new Date(s);
+    if (!isNaN(d.getTime())) return d;
+    return null;
   } catch { return null; }
 };
 
@@ -367,6 +373,8 @@ function App() {
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
   const [activeScreenshot, setActiveScreenshot] = useState(null);
   const [activityLogs, setActivityLogs] = useState([]);
+  const [githubActivityLog, setGithubActivityLog] = useState(null);
+  const [loadingActivity, setLoadingActivity] = useState(false);
 
   // 1. Timer ticking effect
   useEffect(() => {
@@ -385,40 +393,7 @@ function App() {
     return () => clearInterval(interval);
   }, [isTracking]);
 
-  // 2. Periodic log harvesting every 5 minutes while tracking
-  useEffect(() => {
-    if (!isTracking || !isElectron) return;
-    
-    const harvestInterval = setInterval(async () => {
-      try {
-        const result = await window.require('electron').ipcRenderer.invoke('harvest-activity-log');
-        if (result && Object.keys(result).length > 0 && apiUrl) {
-          const selectedWorker = users.find(u => u.id === selectedWorkerId);
-          if (selectedWorker) {
-            const payload = {
-              time: new Date().toISOString(),
-              type: 'ActivityLog',
-              user: selectedWorker.name,
-              value: JSON.stringify(result),
-              sheetUrl: ''
-            };
-            await fetch(apiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-              body: JSON.stringify(payload)
-            });
-            console.log("Uploaded periodic activity log:", result);
-          }
-        }
-      } catch (err) {
-        console.error("Failed to harvest activity log:", err);
-      }
-    }, 5 * 60 * 1000);
-    
-    return () => clearInterval(harvestInterval);
-  }, [isTracking, selectedWorkerId, users, apiUrl]);
-
-  // 3. Real-time active window title checks in UI
+  // 2. Real-time active window title checks in UI
   useEffect(() => {
     if (!isTracking || !isElectron) return;
     
@@ -436,13 +411,42 @@ function App() {
     return () => clearInterval(statusInterval);
   }, [isTracking]);
 
-  // 4. Fetch screenshots when selected user or date changes
+  // 3. Fetch screenshots and activity logs when selected user or date changes
   const activeUser = activeTabId === 'global' ? null : users.find(u => u.id === activeTabId);
   useEffect(() => {
     if (activeUser && activeTabId !== 'global' && githubToken && githubRepo) {
       fetchScreenshots(activeUser.name, trackerDate);
+      fetchGithubActivity(activeUser.name, trackerDate);
     }
   }, [activeTabId, trackerDate, githubToken, githubRepo]);
+
+  const fetchGithubActivity = async (workerName, dateStr) => {
+    if (!githubToken || !githubRepo || !workerName) return;
+    setLoadingActivity(true);
+    setGithubActivityLog(null);
+    try {
+      const filePath = `activity_logs/${workerName}/${dateStr}.json`;
+      const url = `https://api.github.com/repos/${githubRepo}/contents/${filePath}`;
+      const res = await fetch(url, {
+        headers: {
+          'Authorization': `token ${githubToken}`,
+          'Accept': 'application/vnd.github.v3.raw',
+          'User-Agent': 'eLab-Work-Analytics-App'
+        }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGithubActivityLog(data);
+      } else {
+        setGithubActivityLog(null);
+      }
+    } catch (err) {
+      console.error("Failed to fetch activity log from GitHub:", err);
+      setGithubActivityLog(null);
+    } finally {
+      setLoadingActivity(false);
+    }
+  };
 
   const fetchScreenshots = async (workerName, dateStr) => {
     if (!githubToken || !githubRepo || !workerName) return;
@@ -561,9 +565,11 @@ function App() {
 
     setLoading(true);
     try {
+      // Add cache-busting timestamp so Google Apps Script always returns fresh data
+      const cacheBust = `?t=${Date.now()}`;
       const [masterRes, salesRes] = await Promise.all([
-        fetch(apiUrl),
-        salesApiUrl ? fetch(salesApiUrl) : Promise.resolve({ json: () => [] })
+        fetch(apiUrl + cacheBust),
+        salesApiUrl ? fetch(salesApiUrl + cacheBust) : Promise.resolve({ json: () => [] })
       ]);
       const rawData = await masterRes.json();
       const rawSales = salesApiUrl ? await salesRes.json() : [];
@@ -832,7 +838,7 @@ function App() {
       time: new Date().toISOString(),
       type: 'Evaluation',
       user: userName,
-      value: JSON.stringify({
+      detail: JSON.stringify({
         evaluator: 'Admin',
         period,
         teamwork: Number(teamwork),
@@ -1097,27 +1103,9 @@ function App() {
   const handleStopTracking = async () => {
     if (!isElectron) return;
     try {
-      const result = await window.require('electron').ipcRenderer.invoke('stop-tracker');
+      await window.require('electron').ipcRenderer.invoke('stop-tracker');
       setIsTracking(false);
       localStorage.setItem('elab_is_tracking', 'false');
-      // Upload final activity log
-      if (result?.log && Object.keys(result.log).length > 0 && apiUrl) {
-        const selectedWorker = users.find(u => u.id === selectedWorkerId);
-        if (selectedWorker) {
-          const payload = {
-            time: new Date().toISOString(),
-            type: 'ActivityLog',
-            user: selectedWorker.name,
-            value: JSON.stringify(result.log),
-            sheetUrl: ''
-          };
-          await fetch(apiUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-            body: JSON.stringify(payload)
-          });
-        }
-      }
     } catch (err) {
       console.error('Failed to stop tracker:', err);
     }
@@ -2184,17 +2172,23 @@ function App() {
                   </h3>
 
                   {(() => {
-                    const userLogs = activityLogs.filter(log => safeLower(log.user) === safeLower(activeUser.name));
+                    if (loadingActivity) {
+                      return (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '220px', color: 'var(--text-muted)' }}>
+                          <BarChart2 size={40} style={{ opacity: 0.3, marginBottom: '0.75rem' }} />
+                          <p style={{ fontSize: '0.9rem' }}>Loading activity logs from GitHub...</p>
+                        </div>
+                      );
+                    }
+
+                    const logData = githubActivityLog || {};
                     const appSeconds = {};
                     let totalSeconds = 0;
 
-                    userLogs.forEach(log => {
-                      const logData = safeJsonParse(log.detail) || {};
-                      Object.keys(logData).forEach(appName => {
-                        const seconds = Number(logData[appName]) || 0;
-                        appSeconds[appName] = (appSeconds[appName] || 0) + seconds;
-                        totalSeconds += seconds;
-                      });
+                    Object.keys(logData).forEach(appName => {
+                      const seconds = Number(logData[appName]) || 0;
+                      appSeconds[appName] = (appSeconds[appName] || 0) + seconds;
+                      totalSeconds += seconds;
                     });
 
                     const apps = Object.keys(appSeconds).map(appName => ({
@@ -2207,7 +2201,7 @@ function App() {
                       return (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '220px', color: 'var(--text-muted)' }}>
                           <BarChart2 size={40} style={{ opacity: 0.3, marginBottom: '0.75rem' }} />
-                          <p>No activity logs recorded for this worker.</p>
+                          <p>No activity logs recorded for this worker on this date.</p>
                         </div>
                       );
                     }
@@ -2263,7 +2257,7 @@ function App() {
           </button>
         </div>
         <div className="feed-list">
-          {feed.slice(0, 50).map(item => (
+          {(activeTabId === 'global' ? filteredFeed : filteredFeed.filter(f => safeLower(f.user) === safeLower(activeUser?.name))).slice(0, 50).map(item => (
             <div key={item.id} className="feed-item">
               <div className="feed-time">
                 <Clock size={12} style={{ display: 'inline', marginRight: '4px', verticalAlign: 'text-top' }} />

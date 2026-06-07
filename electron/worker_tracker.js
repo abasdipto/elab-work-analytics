@@ -3,6 +3,7 @@ import { exec } from 'child_process';
 
 let trackingInterval = null;
 let activityInterval = null;
+let uploadInterval = null;
 let currentWorkerName = '';
 let gitHubToken = '';
 let gitHubRepo = ''; // Format: owner/repo
@@ -115,6 +116,84 @@ async function captureAndUploadScreen() {
   }
 }
 
+// Function to upload current activeWindowLog to GitHub and merge with existing daily log
+async function uploadActivityLog() {
+  const newLog = { ...activeWindowLog };
+  if (Object.keys(newLog).length === 0) return;
+  activeWindowLog = {}; // Reset immediately to prevent double logging on retry/success
+
+  try {
+    const dateStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const filePath = `activity_logs/${currentWorkerName}/${dateStr}.json`;
+    const url = `https://api.github.com/repos/${gitHubRepo}/contents/${filePath}`;
+
+    let existingLog = {};
+    let sha = null;
+
+    // Get current log if exists
+    const getResponse = await fetch(url, {
+      headers: {
+        'Authorization': `token ${gitHubToken}`,
+        'User-Agent': 'eLab-Work-Analytics-App'
+      }
+    });
+
+    if (getResponse.ok) {
+      const fileData = await getResponse.json();
+      sha = fileData.sha;
+      const content = Buffer.from(fileData.content, 'base64').toString('utf8');
+      try {
+        existingLog = JSON.parse(content);
+      } catch (e) {
+        console.error('Failed to parse existing activity log:', e);
+      }
+    }
+
+    // Merge logs
+    const mergedLog = { ...existingLog };
+    for (const key in newLog) {
+      mergedLog[key] = (mergedLog[key] || 0) + newLog[key];
+    }
+
+    // Upload back to GitHub
+    const base64Content = Buffer.from(JSON.stringify(mergedLog, null, 2)).toString('base64');
+    const body = {
+      message: `Sync activity log for ${currentWorkerName} on ${dateStr}`,
+      content: base64Content
+    };
+    if (sha) {
+      body.sha = sha;
+    }
+
+    const putResponse = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Authorization': `token ${gitHubToken}`,
+        'Content-Type': 'application/json',
+        'User-Agent': 'eLab-Work-Analytics-App'
+      },
+      body: JSON.stringify(body)
+    });
+
+    if (putResponse.ok) {
+      console.log(`Activity log synced to GitHub successfully: ${filePath}`);
+    } else {
+      const errText = await putResponse.text();
+      console.error(`Failed to upload activity log to GitHub:`, errText);
+      // Merge back so we don't lose durations
+      for (const key in newLog) {
+        activeWindowLog[key] = (activeWindowLog[key] || 0) + newLog[key];
+      }
+    }
+  } catch (err) {
+    console.error('Error in uploadActivityLog:', err);
+    // Merge back on network error
+    for (const key in newLog) {
+      activeWindowLog[key] = (activeWindowLog[key] || 0) + newLog[key];
+    }
+  }
+}
+
 // Start tracking timers
 function startTracking(workerName, token, repo) {
   stopTracking();
@@ -142,9 +221,12 @@ function startTracking(workerName, token, repo) {
       }
     });
   }, 5000);
+
+  // Sync activity logs to GitHub every 5 minutes
+  uploadInterval = setInterval(uploadActivityLog, 5 * 60 * 1000);
 }
 
-// Stop tracking timers and return log
+// Stop tracking timers and sync remaining activity log
 function stopTracking() {
   if (trackingInterval) {
     clearInterval(trackingInterval);
@@ -154,9 +236,13 @@ function stopTracking() {
     clearInterval(activityInterval);
     activityInterval = null;
   }
-  const log = { ...activeWindowLog };
-  activeWindowLog = {};
-  return log;
+  if (uploadInterval) {
+    clearInterval(uploadInterval);
+    uploadInterval = null;
+  }
+  
+  // Trigger async upload of final remaining logs
+  uploadActivityLog();
 }
 
 // IPC Handlers configuration
@@ -167,8 +253,8 @@ export function setupWorkerTrackerHandlers() {
   });
 
   ipcMain.handle('stop-tracker', (event) => {
-    const log = stopTracking();
-    return { success: true, log };
+    stopTracking();
+    return { success: true };
   });
 
   ipcMain.handle('get-current-activity', (event) => {
