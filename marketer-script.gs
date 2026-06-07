@@ -43,8 +43,10 @@ function onEditInstallable(e) {
     // হেডার রো বাদ দিন
     if (row <= 1) return;
     
-    const newValue = String(e.value || '').trim();
-    const oldValue = String(e.oldValue || '').trim();
+    // range থেকে সরাসরি বর্তমান ভ্যালু নেয়া (যাতে কপি-পেস্ট করলেও কাজ করে)
+    const rangeValue = e.range.getValue();
+    const newValue = String(rangeValue === undefined || rangeValue === null ? '' : rangeValue).trim();
+    const oldValue = String(e.oldValue === undefined || e.oldValue === null ? '' : e.oldValue).trim();
     
     // ইউজার ইমেইল থেকে নাম বের করা
     const email = (e.user && e.user.email) ? e.user.email.toLowerCase() : '';
@@ -84,6 +86,17 @@ function logToMasterSheet(actionType, userName, detail, sourceSheet) {
     
     if (targetSheet.getLastRow() === 0) {
       targetSheet.appendRow(['Timestamp', 'Action Type', 'User', 'Detail', 'Sheet URL']);
+    } else {
+      // রিয়েল-টাইম ডুপ্লিকেট এন্ট্রি প্রতিরোধ
+      const existingData = targetSheet.getDataRange().getValues();
+      const newKey = (actionType + '|' + detail).toLowerCase().trim();
+      for (let r = 1; r < existingData.length; r++) {
+        const rowKey = (existingData[r][1].toString() + '|' + existingData[r][3].toString()).toLowerCase().trim();
+        if (rowKey === newKey) {
+          Logger.log(`⚠️ Duplicate log prevented: ${actionType} - "${detail}" already exists in Master Sheet.`);
+          return;
+        }
+      }
     }
     
     const sourceSs = SpreadsheetApp.getActiveSpreadsheet();
