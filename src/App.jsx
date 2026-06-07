@@ -206,13 +206,32 @@ function GithubImage({ downloadUrl, token, alt, style, className }) {
     setLoading(true);
     setError(false);
 
+    // Convert raw.githubusercontent.com to api.github.com for private repo CORS support
+    let fetchUrl = downloadUrl;
+    const headers = {};
+    if (downloadUrl.includes('raw.githubusercontent.com')) {
+      try {
+        const parts = downloadUrl.replace('https://raw.githubusercontent.com/', '').split('/');
+        const owner = parts[0];
+        const repo = parts[1];
+        let branchIndex = 2;
+        if (parts[2] === 'refs' && parts[3] === 'heads') {
+          branchIndex = 4;
+        }
+        const path = parts.slice(branchIndex + 1).join('/');
+        fetchUrl = `https://api.github.com/repos/${owner}/${repo}/contents/${path}`;
+        headers['Accept'] = 'application/vnd.github.v3.raw';
+      } catch (e) {
+        // fallback
+      }
+    }
+
     const fetchImage = async () => {
       try {
-        const headers = {};
         if (token) {
           headers['Authorization'] = `token ${token}`;
         }
-        const res = await fetch(downloadUrl, { headers });
+        const res = await fetch(fetchUrl, { headers });
         if (!res.ok) throw new Error("Failed to load image");
         const blob = await res.blob();
         if (isMounted) {
