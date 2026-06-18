@@ -11,6 +11,9 @@ const MASTER_DB_ID   = process.env.MASTER_DB_ID;
 const SALES_SHEET_ID = process.env.SALES_SHEET_ID;
 const SA             = JSON.parse(process.env.GOOGLE_SA_JSON);
 
+// Format: "Name:SheetID,Name:SheetID"  e.g. "Ullash:1l8-7Ak..."
+const RESEARCHER_SHEET_IDS = process.env.RESEARCHER_SHEET_IDS || '';
+
 const SKIP_TABS = new Set(['Log', 'Summary', 'Dashboard', 'Instructions', 'Readme', 'Sheet1']);
 
 // ── SA JWT auth ───────────────────────────────────────────────────────────────
@@ -100,6 +103,47 @@ async function main() {
     }
   }
   console.log(`Master DB: ${masterRows.length} rows`);
+
+  // 1b. Researcher sheets (direct — bypasses Master DB for live data)
+  if (RESEARCHER_SHEET_IDS.trim()) {
+    const pairs = RESEARCHER_SHEET_IDS.split(',').map(s => s.trim()).filter(Boolean);
+    for (const pair of pairs) {
+      const colonIdx = pair.indexOf(':');
+      if (colonIdx < 0) continue;
+      const resName = pair.slice(0, colonIdx).trim();
+      const resId   = pair.slice(colonIdx + 1).trim();
+      console.log(`Reading researcher sheet: ${resName} (${resId})…`);
+      try {
+        const { tabs: resTabs, data: resData } = await getSheetData(token, resId, 'A:F');
+        let added = 0;
+        for (const tab of resTabs) {
+          if (SKIP_TABS.has(tab)) continue;
+          const rows = resData[tab] || [];
+          // Detect header row — skip row 0 if it looks like headers
+          const startIdx = rows.length > 0 && isNaN(Date.parse(String(rows[0]?.[0]))) ? 1 : 0;
+          for (let i = startIdx; i < rows.length; i++) {
+            const r = rows[i];
+            if (!r[0]) continue;
+            const detail = String(r[3] || r[2] || '');
+            if (/ghp_[A-Za-z0-9]{36}|github_pat_|gho_|ghs_|private_key|BEGIN RSA/i.test(detail)) continue;
+            // Map columns flexibly: A=Timestamp, B=ActionType or School, C=Detail or Status
+            masterRows.push({
+              Timestamp:     r[0] || '',
+              'Action Type': r[1] || '',
+              User:          resName,
+              Detail:        detail,
+              'Sheet URL':   r[4] || r[5] || '',
+              _source:       'researcher',
+            });
+            added++;
+          }
+        }
+        console.log(`  → ${resName}: ${added} rows`);
+      } catch (e) {
+        console.error(`  ⚠ Failed to read ${resName} sheet:`, e.message);
+      }
+    }
+  }
 
   // 2. Sales (A:I only — skip J=Revenue, K=Profit)
   console.log('Reading Sales sheet…');
