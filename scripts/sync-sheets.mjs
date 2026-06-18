@@ -87,11 +87,14 @@ async function main() {
     for (let i = 1; i < rows.length; i++) {
       const r = rows[i];
       if (!r[0]) continue;
+      // Skip rows that contain sensitive data (tokens, keys, credentials)
+      const detail = String(r[3] || '');
+      if (/ghp_[A-Za-z0-9]{36}|github_pat_|gho_|ghs_|private_key|BEGIN RSA/i.test(detail)) continue;
       masterRows.push({
         Timestamp:    r[0] || '',
         'Action Type': r[1] || '',
         User:         r[2] || '',
-        Detail:       r[3] || '',
+        Detail:       detail,
         'Sheet URL':  r[4] || '',
       });
     }

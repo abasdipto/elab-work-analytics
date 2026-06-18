@@ -595,14 +595,6 @@ function App() {
         } else {
           console.error('analytics-get-data error:', result.error);
         }
-      } else if (githubRepo) {
-        // GitHub Actions synced JSON — primary web source
-        try {
-          const base = `https://raw.githubusercontent.com/${githubRepo}/main/public`;
-          const cacheBust = `?t=${Date.now()}`;
-          const masterRes = await fetch(`${base}/master-data.json${cacheBust}`);
-          if (masterRes.ok) rawData = await masterRes.json();
-        } catch (e) { console.error('GitHub master-data fetch error:', e); }
       } else if (apiUrl) {
         // Legacy: Apps Script web app endpoint
         const cacheBust = `?t=${Date.now()}`;
@@ -610,7 +602,7 @@ function App() {
         rawData = await masterRes.json();
       }
 
-      // Sales data: prefer direct SA → GitHub JSON → Apps Script URL
+      // Sales data: prefer direct SA, fallback to Apps Script URL
       if (isElectron && saPath && salesSheetId) {
         const { ipcRenderer } = window.require('electron');
         const sr = await ipcRenderer.invoke('analytics-get-sales-data', { saPath, salesSheetId });
@@ -620,17 +612,6 @@ function App() {
         } else {
           console.error('analytics-get-sales-data error:', sr.error);
         }
-      } else if (githubRepo) {
-        // GitHub Actions synced JSON (no revenue/profit)
-        try {
-          const base = `https://raw.githubusercontent.com/${githubRepo}/main/public`;
-          const cacheBust = `?t=${Date.now()}`;
-          const salesRes = await fetch(`${base}/sales-data.json${cacheBust}`);
-          if (salesRes.ok) {
-            rawSales = await salesRes.json();
-            setSalesData(rawSales);
-          }
-        } catch (e) { console.error('GitHub sales-data fetch error:', e); }
       } else if (salesApiUrl) {
         const cacheBust = `?t=${Date.now()}`;
         const salesRes = await fetch(salesApiUrl + cacheBust);
@@ -2793,4 +2774,13 @@ function App() {
                       </button>
                       {newUserAvatar && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <img src={newUserAvatar} alt="Preview" style={{ width: '32
+                          <img src={newUserAvatar} alt="Preview" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--primary)' }} />
+                          <button type="button" onClick={() => setNewUserAvatar('')} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
+                        </div>
+                      )}
+                    </div>
+                    <button type="submit" style={{ width: '100%', padding: '0.5rem 1rem', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', marginTop: '0.5rem' }}>Add Member</button>
+                  </form>
+                  <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                    {users.map(user => (
+                      <div key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', marginBottom: '0.5rem', borderRadius: '6px' }}>
