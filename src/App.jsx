@@ -1140,8 +1140,8 @@ function App() {
           .filter(Boolean);
           
         const userSales = filteredSalesFeed.filter(s => {
-          const saleSchool = safeLower(s.schoolName).trim();
-          return userSchools.some(userSchool => 
+          const saleSchool = safeLower(s.school || s.schoolName).trim();
+          return userSchools.some(userSchool =>
             userSchool && saleSchool && (saleSchool.includes(userSchool) || userSchool.includes(saleSchool))
           );
         });
@@ -1241,8 +1241,8 @@ function App() {
         .filter(Boolean);
         
       userTotalSales = filteredSalesFeed.filter(s => {
-        const saleSchool = safeLower(s.schoolName).trim();
-        return userAssociatedSchools.some(userSchool => 
+        const saleSchool = safeLower(s.school || s.schoolName).trim();
+        return userAssociatedSchools.some(userSchool =>
           userSchool && saleSchool && (saleSchool.includes(userSchool) || userSchool.includes(saleSchool))
         );
       }).length;
@@ -2084,7 +2084,7 @@ function App() {
             )}
 
             {/* ── Sale Attribution Table (Global view, when salesData available) ── */}
-            {activeTabId === 'global' && salesData.length > 0 && (
+            {activeTabId === 'global' && (salesData.length > 0 || salesFeed.length > 0) && (
               <div className="dashboard-grid" style={{ marginTop: '2rem' }}>
                 <div className="chart-container col-span-12" style={{ height: 'auto' }}>
                   <h3 className="chart-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
