@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { setupWorkerTrackerHandlers } from './worker_tracker.js';
+import { setupSheetsAnalyticsHandlers } from './sheets_analytics.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -30,6 +31,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   setupWorkerTrackerHandlers();
+  setupSheetsAnalyticsHandlers(app.getPath('userData'));
   createWindow();
 
   app.on('activate', () => {

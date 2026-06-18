@@ -352,6 +352,24 @@ function App() {
   const hasSyncedUsersRef = useRef(false);
   const [countdown, setCountdown] = useState(30);
 
+  // Direct Sheets API config (replaces Apps Script)
+  const [saPath, setSaPath] = useState(() => localStorage.getItem('elab_sa_path') || '');
+  const [masterDbId, setMasterDbId] = useState(() => localStorage.getItem('elab_master_db_id') || '1xJyuu0HcY235mmOX8J860A5fCQS11KQDk4SMuLS4N0');
+  // Sales sheet (direct SA — revenue/profit hidden)
+  const [salesSheetId, setSalesSheetId] = useState(() => localStorage.getItem('elab_sales_sheet_id') || '1WjYBpkxwOEKbLXppXnK211cEyc-UgsmXfB8Avu7zEUo');
+  const [salesData, setSalesData] = useState([]);
+
+  // Multi-researcher sheet config
+  const [researcherSheets, setResearcherSheets] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('elab_researcher_sheets') || '[]'); } catch { return []; }
+  });
+  const [designerName, setDesignerName] = useState(() => localStorage.getItem('elab_designer_name') || 'Robin');
+  const [uploaderName, setUploaderName] = useState(() => localStorage.getItem('elab_uploader_name') || 'Dipto');
+  const [syncingSheets, setSyncingSheets] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
+  const [autoSyncMinutes, setAutoSyncMinutes] = useState(() => Number(localStorage.getItem('elab_auto_sync_minutes') || 5));
+  const [autoSyncEnabled, setAutoSyncEnabled] = useState(false);
+
   // Worker Tracking states
   const [selectedWorkerId, setSelectedWorkerId] = useState(() => localStorage.getItem('elab_worker_id') || '');
   const [isTracking, setIsTracking] = useState(() => localStorage.getItem('elab_is_tracking') === 'true');
@@ -513,7 +531,7 @@ function App() {
   }, [users, evalUser]);
 
   const fetchData = async () => {
-    if (useMock || !apiUrl) {
+    if (useMock || (!apiUrl && !(isElectron && saPath && masterDbId))) {
       // Mock chart
       const mockChartData = Array.from({ length: 7 }).map((_, i) => ({
         date: format(subDays(new Date(), 6 - i), 'MMM dd'),
@@ -565,14 +583,40 @@ function App() {
 
     setLoading(true);
     try {
-      // Add cache-busting timestamp so Google Apps Script always returns fresh data
-      const cacheBust = `?t=${Date.now()}`;
-      const [masterRes, salesRes] = await Promise.all([
-        fetch(apiUrl + cacheBust),
-        salesApiUrl ? fetch(salesApiUrl + cacheBust) : Promise.resolve({ json: () => [] })
-      ]);
-      const rawData = await masterRes.json();
-      const rawSales = salesApiUrl ? await salesRes.json() : [];
+      let rawData = [];
+      let rawSales = [];
+
+      // Prefer direct SA read when running in Electron with SA configured
+      if (isElectron && saPath && masterDbId) {
+        const { ipcRenderer } = window.require('electron');
+        const result = await ipcRenderer.invoke('analytics-get-data', { saPath, masterDbId });
+        if (result.success) {
+          rawData = result.data;
+        } else {
+          console.error('analytics-get-data error:', result.error);
+        }
+      } else if (apiUrl) {
+        // Legacy: Apps Script web app endpoint
+        const cacheBust = `?t=${Date.now()}`;
+        const masterRes = await fetch(apiUrl + cacheBust);
+        rawData = await masterRes.json();
+      }
+
+      // Sales data: prefer direct SA, fallback to Apps Script URL
+      if (isElectron && saPath && salesSheetId) {
+        const { ipcRenderer } = window.require('electron');
+        const sr = await ipcRenderer.invoke('analytics-get-sales-data', { saPath, salesSheetId });
+        if (sr.success) {
+          rawSales = sr.data;
+          setSalesData(sr.data);
+        } else {
+          console.error('analytics-get-sales-data error:', sr.error);
+        }
+      } else if (salesApiUrl) {
+        const cacheBust = `?t=${Date.now()}`;
+        const salesRes = await fetch(salesApiUrl + cacheBust);
+        rawSales = await salesRes.json();
+      }
       setSalesFeed(rawSales);
       
       const formattedFeed = rawData.map((row, index) => ({
@@ -708,10 +752,10 @@ function App() {
   useEffect(() => {
     fetchData();
     setCountdown(30); // Reset countdown on manual switch
-  }, [useMock, apiUrl, salesApiUrl, activeTabId]);
+  }, [useMock, apiUrl, salesApiUrl, activeTabId, saPath, masterDbId]);
 
   useEffect(() => {
-    if (useMock || !apiUrl) return;
+    if (useMock || (!apiUrl && !(isElectron && saPath && masterDbId))) return;
     const interval = setInterval(() => {
       setCountdown((prev) => {
         if (prev <= 1) {
@@ -722,7 +766,54 @@ function App() {
       });
     }, 1000);
     return () => clearInterval(interval);
-  }, [useMock, apiUrl, salesApiUrl, activeTabId]);
+  }, [useMock, apiUrl, salesApiUrl, activeTabId, saPath, masterDbId]);
+
+  // ── Auto-sync: auto-detect researcher sheets from Drive, then start sync ──────
+  useEffect(() => {
+    if (!isElectron || !saPath || !masterDbId) return;
+    const { ipcRenderer } = window.require('electron');
+
+    const researcherNames = users.filter(u => u.role === 'Researcher').map(u => u.name);
+    const _designerName   = users.find(u => u.role === 'Designer')?.name  || designerName;
+    const _uploaderName   = users.find(u => u.role === 'Uploader')?.name  || uploaderName;
+
+    if (!researcherNames.length) return;
+
+    ipcRenderer.invoke('analytics-auto-detect-sheets', { saPath, researcherNames })
+      .then(res => {
+        if (!res?.success) return;
+        const configs = Object.entries(res.matches).map(([name, { sheetId }]) => ({
+          sheetId, ownerName: name, designerName: _designerName, uploaderName: _uploaderName,
+        }));
+        if (!configs.length) return;
+        return ipcRenderer.invoke('analytics-configure-auto-sync', {
+          saPath, masterDbId, configs, intervalMinutes: autoSyncMinutes,
+        });
+      })
+      .then(r => { if (r?.success) setAutoSyncEnabled(true); })
+      .catch(console.error);
+  }, [saPath, masterDbId, users, designerName, uploaderName, autoSyncMinutes]);
+
+  // ── Auto-sync: listen for background sync results emitted by main process ────
+  useEffect(() => {
+    if (!isElectron) return;
+    const { ipcRenderer } = window.require('electron');
+    const handler = (_event, result) => {
+      if (result.success) {
+        const parts = [];
+        if (result.added)      parts.push(`+${result.added} names`);
+        if (result.designDone) parts.push(`+${result.designDone} designs`);
+        if (result.uploadDone) parts.push(`+${result.uploadDone} uploads`);
+        const summary = parts.length ? parts.join(', ') : 'up-to-date';
+        setSyncMsg(`🔄 Auto-synced (${new Date(result.time || Date.now()).toLocaleTimeString()}): ${summary}`);
+        fetchData();
+      } else {
+        setSyncMsg(`⚠️ Auto-sync error: ${result.error || 'Unknown'}`);
+      }
+    };
+    ipcRenderer.on('analytics-sync-result', handler);
+    return () => ipcRenderer.removeListener('analytics-sync-result', handler);
+  }, []);
 
   const handlePhotoSelect = async (e) => {
     const file = e.target.files?.[0];
@@ -737,8 +828,18 @@ function App() {
   };
 
   const saveUsersToCloud = async (updatedUsers) => {
-    if (useMock || !apiUrl) return;
+    if (useMock) return;
     try {
+      if (isElectron && saPath && masterDbId) {
+        const { ipcRenderer } = window.require('electron');
+        await ipcRenderer.invoke('analytics-post-row', {
+          saPath, masterDbId,
+          userName: 'System', actionType: 'MemberUpdate',
+          detail: JSON.stringify(updatedUsers), sheetUrl: ''
+        });
+        return;
+      }
+      if (!apiUrl) return;
       const payload = {
         type: 'MemberUpdate',
         user: 'System',
@@ -762,8 +863,18 @@ function App() {
     setGithubToken(token);
     setGithubRepo(repo);
 
-    if (useMock || !apiUrl) return;
+    if (useMock) return;
     try {
+      if (isElectron && saPath && masterDbId) {
+        const { ipcRenderer } = window.require('electron');
+        await ipcRenderer.invoke('analytics-post-row', {
+          saPath, masterDbId,
+          userName: 'System', actionType: 'ConfigUpdate',
+          detail: JSON.stringify({ githubToken: token, githubRepo: repo }), sheetUrl: ''
+        });
+        return;
+      }
+      if (!apiUrl) return;
       const payload = {
         type: 'ConfigUpdate',
         user: 'System',
@@ -778,6 +889,37 @@ function App() {
       });
     } catch (err) {
       console.error('Failed to sync config to cloud:', err);
+    }
+  };
+
+  // Sync researcher sheets → Master DB (replaces Apps Script trigger)
+  const handleSyncSheets = async () => {
+    if (!isElectron || !saPath || !masterDbId) return;
+    setSyncingSheets(true);
+    setSyncMsg('');
+    try {
+      const { ipcRenderer } = window.require('electron');
+      const researcherNames = users.filter(u => u.role === 'Researcher').map(u => u.name);
+      const _designerName  = users.find(u => u.role === 'Designer')?.name  || designerName;
+      const _uploaderName  = users.find(u => u.role === 'Uploader')?.name  || uploaderName;
+      setSyncMsg('🔍 Detecting sheets...');
+      const detected = await ipcRenderer.invoke('analytics-auto-detect-sheets', { saPath, researcherNames });
+      if (!detected.success) { setSyncMsg(`❌ Drive error: ${detected.error}`); return; }
+      const configs = Object.entries(detected.matches).map(([name, { sheetId }]) => ({
+        sheetId, ownerName: name, designerName: _designerName, uploaderName: _uploaderName,
+      }));
+      if (!configs.length) { setSyncMsg('⚠️ No matching sheets found in Drive. Make sure sheets are shared with the service account and named after each researcher.'); return; }
+      const result = await ipcRenderer.invoke('analytics-sync-sheets', { saPath, masterDbId, configs });
+      if (result.success) {
+        setSyncMsg(`✅ Synced: ${result.added} names, ${result.designDone} designs, ${result.uploadDone} uploads`);
+        fetchData();
+      } else {
+        setSyncMsg(`❌ Sync failed: ${result.error}`);
+      }
+    } catch (err) {
+      setSyncMsg(`❌ Error: ${err.message}`);
+    } finally {
+      setSyncingSheets(false);
     }
   };
 
@@ -832,23 +974,44 @@ function App() {
       return true;
     }
     
+    const detail = JSON.stringify({
+      evaluator: 'Admin',
+      period,
+      teamwork: Number(teamwork),
+      rules: Number(rules),
+      helping: Number(helping),
+      notes
+    });
+
+    // Direct SA path (preferred in Electron)
+    if (isElectron && saPath && masterDbId) {
+      try {
+        const { ipcRenderer } = window.require('electron');
+        const result = await ipcRenderer.invoke('analytics-post-row', {
+          saPath, masterDbId,
+          userName, actionType: 'Evaluation', detail, sheetUrl: 'Manual Entry'
+        });
+        if (result.success) {
+          setTimeout(fetchData, 1000);
+          return true;
+        }
+        return false;
+      } catch (err) {
+        console.error("Error submitting evaluation via IPC:", err);
+        return false;
+      }
+    }
+
     if (!apiUrl) return false;
-    
+
     const payload = {
       time: new Date().toISOString(),
       type: 'Evaluation',
       user: userName,
-      detail: JSON.stringify({
-        evaluator: 'Admin',
-        period,
-        teamwork: Number(teamwork),
-        rules: Number(rules),
-        helping: Number(helping),
-        notes
-      }),
+      detail,
       sheetUrl: 'Manual Entry'
     };
-    
+
     try {
       const response = await fetch(apiUrl, {
         method: 'POST',
@@ -857,8 +1020,6 @@ function App() {
         },
         body: JSON.stringify(payload)
       });
-      // Google Apps Script usually returns redirect or text response.
-      // If we got any response, we treat it as successful if status is ok.
       if (response.ok) {
         setTimeout(fetchData, 1000);
         return true;
@@ -1888,6 +2049,99 @@ function App() {
               </div>
             )}
 
+            {/* ── Sale Attribution Table (Global view, when salesData available) ── */}
+            {activeTabId === 'global' && salesData.length > 0 && (
+              <div className="dashboard-grid" style={{ marginTop: '2rem' }}>
+                <div className="chart-container col-span-12" style={{ height: 'auto' }}>
+                  <h3 className="chart-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>🏆 Sale Attribution — Who Researched & Marketed Each Order</span>
+                    <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: 'normal' }}>
+                      {filteredSalesFeed.length} orders · {timeFilter}
+                    </span>
+                  </h3>
+                  <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem', color: '#fff' }}>
+                      <thead>
+                        <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)', textAlign: 'left' }}>
+                          <th style={{ padding: '10px 12px', color: '#94a3b8' }}>School</th>
+                          <th style={{ padding: '10px 12px', color: '#94a3b8' }}>Date</th>
+                          <th style={{ padding: '10px 12px', color: '#94a3b8' }}>Qty</th>
+                          <th style={{ padding: '10px 12px', color: '#94a3b8' }}>🔬 Researcher</th>
+                          <th style={{ padding: '10px 12px', color: '#94a3b8' }}>📣 Marketer</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(() => {
+                          const researchMap = {};
+                          const marketMap  = {};
+                          for (const f of feed) {
+                            const type   = safeLower(f.type).trim();
+                            const school = safeLower(f.detail).trim();
+                            if (!school) continue;
+                            if (type === 'name added' && !isUserMarketer(f.user)) {
+                              if (!researchMap[school]) researchMap[school] = f.user;
+                            }
+                            if (type === 'marketed' || (type === 'name added' && isUserMarketer(f.user))) {
+                              if (!marketMap[school]) marketMap[school] = f.user;
+                            }
+                          }
+                          const findAttrib = (map, schoolName) => {
+                            const sl = safeLower(schoolName).trim();
+                            if (!sl) return null;
+                            if (map[sl]) return map[sl];
+                            const key = Object.keys(map).find(k => k && (sl.includes(k) || k.includes(sl)));
+                            return key ? map[key] : null;
+                          };
+                          const displayRows = salesData.filter(s => {
+                            if (!s.date) return false;
+                            const d = safeParse(s.date);
+                            if (!d) return timeFilter === 'All Time';
+                            if (timeFilter === 'Today')      return isToday(d);
+                            if (timeFilter === 'Yesterday')  return isYesterday(d);
+                            if (timeFilter === 'This Week')  return isThisWeek(d);
+                            if (timeFilter === 'This Month') return isThisMonth(d);
+                            if (timeFilter === 'Last Month') {
+                              const lm = subMonths(new Date(), 1);
+                              return d.getMonth() === lm.getMonth() && d.getFullYear() === lm.getFullYear();
+                            }
+                            return true;
+                          });
+                          if (!displayRows.length) return (
+                            <tr><td colSpan={5} style={{ padding: '2rem', textAlign: 'center', color: '#64748b' }}>No orders for this period</td></tr>
+                          );
+                          return displayRows.map((s, i) => {
+                            const researcher = findAttrib(researchMap, s.school);
+                            const marketer   = findAttrib(marketMap,   s.school);
+                            return (
+                              <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+                                onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
+                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                                <td style={{ padding: '10px 12px', fontWeight: 500 }}>{s.school}</td>
+                                <td style={{ padding: '10px 12px', color: '#94a3b8', fontSize: '0.8rem' }}>
+                                  {s.date ? (() => { const d = safeParse(s.date); return d ? format(d, 'MMM d, yyyy') : s.date; })() : '—'}
+                                </td>
+                                <td style={{ padding: '10px 12px', textAlign: 'center' }}>{s.quantity || 1}</td>
+                                <td style={{ padding: '10px 12px' }}>
+                                  {researcher
+                                    ? <span style={{ background: 'rgba(99,102,241,0.15)', color: '#a5b4fc', padding: '2px 8px', borderRadius: '999px', fontSize: '0.78rem' }}>👤 {researcher}</span>
+                                    : <span style={{ color: '#475569', fontSize: '0.78rem' }}>—</span>}
+                                </td>
+                                <td style={{ padding: '10px 12px' }}>
+                                  {marketer
+                                    ? <span style={{ background: 'rgba(34,197,94,0.12)', color: '#86efac', padding: '2px 8px', borderRadius: '999px', fontSize: '0.78rem' }}>📣 {marketer}</span>
+                                    : <span style={{ color: '#475569', fontSize: '0.78rem' }}>—</span>}
+                                </td>
+                              </tr>
+                            );
+                          });
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* 📊 Team Performance & Increment Report for Global Dashboard */}
             {activeTabId === 'global' && (
               <div className="dashboard-grid" style={{ marginTop: '2rem' }}>
@@ -2335,10 +2589,102 @@ function App() {
             
             {settingsTab === 'config' || userRole !== 'admin' ? (
               <>
+                {/* ── Direct Sheets API (SA) ────────────────────────────── */}
+                {isElectron && (
+                  <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem', border: '1px solid rgba(99,102,241,0.3)' }}>
+                    <h3 style={{ fontSize: '1rem', color: '#a5b4fc', marginBottom: '0.75rem' }}>🔑 Direct Google Sheets API (Recommended)</h3>
+
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Service Account JSON Path</label>
+                    <input
+                      type="text"
+                      value={saPath}
+                      onChange={(e) => { setSaPath(e.target.value); localStorage.setItem('elab_sa_path', e.target.value); }}
+                      placeholder="D:\Own Build\FBLAB\orchestrator\service-account.json"
+                      style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', marginBottom: '0.75rem' }}
+                    />
+
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Master DB Spreadsheet ID</label>
+                    <input
+                      type="text"
+                      value={masterDbId}
+                      onChange={(e) => { setMasterDbId(e.target.value); localStorage.setItem('elab_master_db_id', e.target.value); }}
+                      placeholder="1xJyuu0HcY235mmOX8J860A5fCQS11KQDk4SMuLS4N0"
+                      style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', marginBottom: '0.75rem' }}
+                    />
+
+                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>Sales Record Sheet ID</label>
+                    <input
+                      type="text"
+                      value={salesSheetId}
+                      onChange={(e) => { setSalesSheetId(e.target.value); localStorage.setItem('elab_sales_sheet_id', e.target.value); }}
+                      placeholder="1WjYBpkxwOEKbLXppXnK211cEyc-UgsmXfB8Avu7zEUo"
+                      style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', marginBottom: '0.75rem', fontSize: '0.82rem' }}
+                    />
+
+                    {/* Auto-detect info — no manual sheet IDs needed */}
+                    <div style={{ background: 'rgba(99,102,241,0.08)', border: '1px solid rgba(99,102,241,0.2)', borderRadius: '6px', padding: '0.6rem 0.75rem', marginBottom: '0.75rem', fontSize: '0.8rem', color: '#a5b4fc' }}>
+                      🤖 <strong>Fully automatic.</strong> Researcher sheets are detected from Google Drive — no Sheet IDs needed. Just make sure each researcher's sheet is shared with the service account and the sheet name contains their name.
+                      <div style={{ marginTop: '6px', color: '#64748b' }}>
+                        Researchers: {users.filter(u => u.role === 'Researcher').map(u => u.name).join(', ') || 'None added yet'}
+                      </div>
+                    </div>
+
+                    {syncMsg && (
+                      <div style={{
+                        padding: '6px 10px', borderRadius: '6px', marginBottom: '0.75rem', fontSize: '0.82rem',
+                        background: syncMsg.startsWith('✅') ? 'rgba(34,197,94,0.1)' : syncMsg.startsWith('⚠️') ? 'rgba(245,158,11,0.1)' : 'rgba(239,68,68,0.1)',
+                        color:      syncMsg.startsWith('✅') ? '#bbf7d0'              : syncMsg.startsWith('⚠️') ? '#fde68a'               : '#fca5a5',
+                      }}>{syncMsg}</div>
+                    )}
+
+                    {/* Auto-sync interval selector */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+                        🔄 Auto-sync every:
+                      </label>
+                      <select
+                        value={autoSyncMinutes}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setAutoSyncMinutes(v);
+                          localStorage.setItem('elab_auto_sync_minutes', v);
+                        }}
+                        style={{ padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', fontSize: '0.85rem' }}
+                      >
+                        <option value={5}>5 minutes</option>
+                        <option value={10}>10 minutes</option>
+                        <option value={30}>30 minutes</option>
+                        <option value={60}>60 minutes</option>
+                      </select>
+                      {autoSyncEnabled && (
+                        <span style={{ fontSize: '0.75rem', color: '#4ade80', marginLeft: '4px' }}>● Active</span>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '0.75rem' }}>
+                      <button
+                        onClick={() => { fetchData(); setSyncMsg(''); }}
+                        disabled={!saPath || !masterDbId}
+                        style={{ flex: 1, padding: '0.5rem', background: saPath && masterDbId ? 'var(--primary)' : '#475569', color: '#fff', border: 'none', borderRadius: '6px', cursor: saPath && masterDbId ? 'pointer' : 'not-allowed' }}
+                      >
+                        Connect & Fetch
+                      </button>
+                      <button
+                        onClick={handleSyncSheets}
+                        disabled={syncingSheets || !saPath || !masterDbId || !users.some(u => u.role === 'Researcher')}
+                        style={{ flex: 1, padding: '0.5rem', background: '#0891b2', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', opacity: syncingSheets ? 0.7 : 1 }}
+                      >
+                        {syncingSheets ? '⏳ Syncing...' : '🔄 Sync Now'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Legacy Apps Script (fallback) ─────────────────────── */}
                 <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1rem', borderRadius: '8px', marginBottom: '1.5rem' }}>
-                  <h3 style={{ fontSize: '1rem', color: '#a5b4fc', marginBottom: '0.5rem' }}>Master API URL</h3>
-                  <input 
-                    type="text" 
+                  <h3 style={{ fontSize: '1rem', color: '#94a3b8', marginBottom: '0.5rem' }}>Legacy: Apps Script API URL</h3>
+                  <input
+                    type="text"
                     value={apiUrl}
                     onChange={(e) => setApiUrl(e.target.value)}
                     placeholder="https://script.google.com/macros/s/.../exec"
@@ -2438,189 +2784,3 @@ function App() {
                   <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
                     {users.map(user => (
                       <div key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', marginBottom: '0.5rem', borderRadius: '6px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => { setEditingPhotoUserId(user.id); editFileInputRef.current?.click(); }}>
-                            <Avatar user={user} size={28} />
-                            <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '14px', height: '14px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1.5px solid #1e293b' }}>
-                              <Camera size={8} color="#fff" />
-                            </div>
-                          </div>
-                          <div>
-                            <span style={{ color: '#fff', fontWeight: 500 }}>{user.name}</span>
-                            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginLeft: '0.5rem' }}>({user.role})</span>
-                          </div>
-                        </div>
-                        <button onClick={() => handleDeleteUser(user.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                  <input type="file" ref={editFileInputRef} accept="image/*" onChange={handleEditPhotoSelect} style={{ display: 'none' }} />
-                </div>
-              </>
-            ) : (
-              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1.25rem', borderRadius: '8px' }}>
-                <h3 style={{ fontSize: '1.1rem', color: '#a5b4fc', marginBottom: '1rem' }}>Submit Performance Evaluation</h3>
-                
-                {evalMsg && (
-                  <div style={{ 
-                    padding: '8px 12px', 
-                    borderRadius: '6px', 
-                    background: evalMsg.includes('failed') ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
-                    border: evalMsg.includes('failed') ? '1px solid rgba(239,68,68,0.3)' : '1px solid rgba(34,197,94,0.3)',
-                    color: evalMsg.includes('failed') ? '#fca5a5' : '#bbf7d0',
-                    fontSize: '0.85rem',
-                    marginBottom: '1rem'
-                  }}>
-                    {evalMsg}
-                  </div>
-                )}
-                
-                <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '6px' }}>Select Team Member</label>
-                  <select 
-                    value={evalUser}
-                    onChange={(e) => setEvalUser(e.target.value)}
-                    style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff' }}
-                  >
-                    {users.map(u => (
-                      <option key={u.id} value={u.name}>{u.name} ({u.role})</option>
-                    ))}
-                  </select>
-                </div>
-
-                <div style={{ marginBottom: '1rem' }}>
-                  <label style={{ display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '6px' }}>Evaluation Period (Year/Month)</label>
-                  <input 
-                    type="text" 
-                    value={evalPeriod}
-                    onChange={(e) => setEvalPeriod(e.target.value)}
-                    placeholder="e.g. 2026, or June 2026"
-                    style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff' }}
-                  />
-                </div>
-
-                {/* Rating Teamwork */}
-                <div style={{ marginBottom: '1rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px' }}>
-                    <span style={{ color: '#94a3b8' }}>Teamwork & Behavior (১-৫)</span>
-                    <span style={{ color: '#a5b4fc', fontWeight: 600 }}>⭐ {evalTeamwork} / 5</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="1" 
-                    max="5" 
-                    step="0.1"
-                    value={evalTeamwork}
-                    onChange={(e) => setEvalTeamwork(Number(e.target.value))}
-                    style={{ width: '100%', accentColor: 'var(--primary)' }}
-                  />
-                </div>
-
-                {/* Rating Rules */}
-                <div style={{ marginBottom: '1rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px' }}>
-                    <span style={{ color: '#94a3b8' }}>Rules & Office Culture (১-৫)</span>
-                    <span style={{ color: '#a5b4fc', fontWeight: 600 }}>⭐ {evalRules} / 5</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="1" 
-                    max="5" 
-                    step="0.1"
-                    value={evalRules}
-                    onChange={(e) => setEvalRules(Number(e.target.value))}
-                    style={{ width: '100%', accentColor: 'var(--primary)' }}
-                  />
-                </div>
-
-                {/* Rating Helping */}
-                <div style={{ marginBottom: '1.25rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px' }}>
-                    <span style={{ color: '#94a3b8' }}>Helping Others (১-৫)</span>
-                    <span style={{ color: '#a5b4fc', fontWeight: 600 }}>⭐ {evalHelping} / 5</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="1" 
-                    max="5" 
-                    step="0.1"
-                    value={evalHelping}
-                    onChange={(e) => setEvalHelping(Number(e.target.value))}
-                    style={{ width: '100%', accentColor: 'var(--primary)' }}
-                  />
-                </div>
-
-                {/* Feedback notes */}
-                <div style={{ marginBottom: '1.5rem' }}>
-                  <label style={{ display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '6px' }}>Remarks / Feedback (ফিডব্যক/মন্তব্য)</label>
-                  <textarea 
-                    value={evalNotes}
-                    onChange={(e) => setEvalNotes(e.target.value)}
-                    placeholder="Enter employee performance review notes..."
-                    rows="3"
-                    style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', resize: 'vertical', fontFamily: 'inherit' }}
-                  />
-                </div>
-
-                <button 
-                  onClick={async () => {
-                    const finalUser = evalUser || (users.length > 0 ? users[0].name : '');
-                    if (!finalUser) {
-                      setEvalMsg('Please select a member first.');
-                      return;
-                    }
-                    setEvalSubmitting(true);
-                    setEvalMsg('');
-                    const success = await submitEvaluation(finalUser, evalTeamwork, evalRules, evalHelping, evalPeriod, evalNotes);
-                    setEvalSubmitting(false);
-                    if (success) {
-                      setEvalMsg('✅ Evaluation submitted successfully!');
-                      setEvalNotes('');
-                    } else {
-                      setEvalMsg('❌ Submission failed. Check Master API connection.');
-                    }
-                  }}
-                  disabled={evalSubmitting}
-                  style={{ width: '100%', padding: '0.75rem', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
-                >
-                  {evalSubmitting ? 'Submitting...' : 'Submit Rating'}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Lightbox Modal */}
-      {isLightboxOpen && activeScreenshot && (
-        <div className="lightbox-overlay" onClick={() => setIsLightboxOpen(false)}>
-          <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
-            <button className="lightbox-close" onClick={() => setIsLightboxOpen(false)}>✕</button>
-            <GithubImage 
-              downloadUrl={activeScreenshot.downloadUrl} 
-              token={githubToken} 
-              alt={`Screenshot at ${activeScreenshot.timeStr}`}
-              className="lightbox-image"
-            />
-            <div className="lightbox-caption">
-              Captured at {activeScreenshot.timeStr} on {trackerDate}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Wrap App with ErrorBoundary for export
-function AppWithErrorBoundary() {
-  return (
-    <ErrorBoundary>
-      <App />
-    </ErrorBoundary>
-  );
-}
-
-export default AppWithErrorBoundary;
