@@ -129,8 +129,4 @@ async function main() {
   // 3. Write JSON files
   mkdirSync('public', { recursive: true });
   writeFileSync('public/master-data.json', JSON.stringify(masterRows, null, 2));
-  writeFileSync('public/sales-data.json',  JSON.stringify(salesRows,  null, 2));
-  console.log('✅ Written public/master-data.json and public/sales-data.json');
-}
-
-main().catch(err => { console.error(err); process.exit(1); });
+  writeFileSync

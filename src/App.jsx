@@ -285,6 +285,19 @@ function GithubImage({ downloadUrl, token, alt, style, className }) {
 
 function App() {
   const isElectron = typeof window !== 'undefined' && navigator.userAgent.toLowerCase().includes('electron');
+
+  // Auto-detect GitHub repo from GitHub Pages URL (e.g. abasdipto.github.io/elab-work-analytics)
+  const autoGithubRepo = (() => {
+    if (typeof window === 'undefined') return '';
+    const host = window.location.hostname;
+    const path = window.location.pathname; // e.g. /elab-work-analytics/
+    if (host.endsWith('.github.io')) {
+      const user = host.replace('.github.io', '');
+      const repo = path.split('/').filter(Boolean)[0] || '';
+      if (user && repo) return `${user}/${repo}`;
+    }
+    return '';
+  })();
   
   // App modes: 'select' (Electron selection), 'dashboard_auth' (Passcode screen), 'dashboard' (Dashboard view), 'worker_portal' (Worker view)
   const [appMode, setAppMode] = useState(() => {
@@ -595,6 +608,15 @@ function App() {
         } else {
           console.error('analytics-get-data error:', result.error);
         }
+      } else if (githubRepo || autoGithubRepo) {
+        // GitHub Actions synced JSON — primary web source
+        try {
+          const repo = githubRepo || autoGithubRepo;
+          const base = `https://raw.githubusercontent.com/${repo}/main/public`;
+          const cacheBust = `?t=${Date.now()}`;
+          const masterRes = await fetch(`${base}/master-data.json${cacheBust}`);
+          if (masterRes.ok) rawData = await masterRes.json();
+        } catch (e) { console.error('GitHub master-data fetch error:', e); }
       } else if (apiUrl) {
         // Legacy: Apps Script web app endpoint
         const cacheBust = `?t=${Date.now()}`;
@@ -602,7 +624,7 @@ function App() {
         rawData = await masterRes.json();
       }
 
-      // Sales data: prefer direct SA, fallback to Apps Script URL
+      // Sales data: prefer direct SA → GitHub JSON → Apps Script URL
       if (isElectron && saPath && salesSheetId) {
         const { ipcRenderer } = window.require('electron');
         const sr = await ipcRenderer.invoke('analytics-get-sales-data', { saPath, salesSheetId });
@@ -612,6 +634,18 @@ function App() {
         } else {
           console.error('analytics-get-sales-data error:', sr.error);
         }
+      } else if (githubRepo || autoGithubRepo) {
+        // GitHub Actions synced JSON (no revenue/profit)
+        try {
+          const repo = githubRepo || autoGithubRepo;
+          const base = `https://raw.githubusercontent.com/${repo}/main/public`;
+          const cacheBust = `?t=${Date.now()}`;
+          const salesRes = await fetch(`${base}/sales-data.json${cacheBust}`);
+          if (salesRes.ok) {
+            rawSales = await salesRes.json();
+            setSalesData(rawSales);
+          }
+        } catch (e) { console.error('GitHub sales-data fetch error:', e); }
       } else if (salesApiUrl) {
         const cacheBust = `?t=${Date.now()}`;
         const salesRes = await fetch(salesApiUrl + cacheBust);
@@ -2768,19 +2802,4 @@ function App() {
                     </select>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '1 1 100%', marginTop: '0.25rem' }}>
                       <input type="file" ref={fileInputRef} accept="image/*" onChange={handlePhotoSelect} style={{ display: 'none' }} />
-                      <button type="button" onClick={() => fileInputRef.current?.click()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px dashed rgba(99, 102, 241, 0.5)', background: 'rgba(99, 102, 241, 0.1)', color: '#a5b4fc', cursor: 'pointer', fontSize: '0.85rem', transition: 'all 0.2s' }}>
-                        <Camera size={16} />
-                        {newUserAvatar ? 'Change Photo' : 'Upload Photo'}
-                      </button>
-                      {newUserAvatar && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <img src={newUserAvatar} alt="Preview" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--primary)' }} />
-                          <button type="button" onClick={() => setNewUserAvatar('')} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
-                        </div>
-                      )}
-                    </div>
-                    <button type="submit" style={{ width: '100%', padding: '0.5rem 1rem', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', marginTop: '0.5rem' }}>Add Member</button>
-                  </form>
-                  <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
-                    {users.map(user => (
-                      <div key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', marginBottom: '0.5rem', borderRadius: '6px' }}>
+                      <button type="button" onClick={() => fileInputR
