@@ -25,16 +25,27 @@ jobs:
           GOOGLE_SA_JSON: ${{ secrets.GOOGLE_SA_JSON }}
           MASTER_DB_ID: ${{ secrets.MASTER_DB_ID }}
           SALES_SHEET_ID: ${{ secrets.SALES_SHEET_ID }}
+          RESEARCHER_SHEET_IDS: ${{ secrets.RESEARCHER_SHEET_IDS }}
         run: node scripts/sync-sheets.mjs
 
       - name: Commit updated data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          # Save freshly generated files before resetting
+          cp public/master-data.json /tmp/master-data.json
+          cp public/sales-data.json  /tmp/sales-data.json
+          # Sync to latest remote HEAD to avoid push rejection
+          git fetch origin main
+          git reset --hard origin/main
+          # Restore generated files on top of latest remote
+          cp /tmp/master-data.json public/master-data.json
+          cp /tmp/sales-data.json  public/sales-data.json
+          # Commit and push (always on latest — no --force needed)
           git add public/master-data.json public/sales-data.json
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             git commit -m "data: auto-sync [$(date -u '+%Y-%m-%d %H:%M UTC')]"
-            git push origin HEAD:main --force
+            git push origin HEAD:main
           fi
