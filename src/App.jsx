@@ -357,6 +357,9 @@ function App() {
   const [newUserName, setNewUserName] = useState('');
   const [newUserRole, setNewUserRole] = useState('Researcher');
   const [newUserAvatar, setNewUserAvatar] = useState('');
+  const [newUserSheetUrl, setNewUserSheetUrl] = useState('');
+  const [newUserTelegramId, setNewUserTelegramId] = useState('');
+  const [onboardStatus, setOnboardStatus] = useState([]);
   const fileInputRef = useRef(null);
   const editFileInputRef = useRef(null);
   const [editingPhotoUserId, setEditingPhotoUserId] = useState(null);
@@ -975,12 +978,36 @@ function App() {
   const handleAddUser = async (e) => {
     e.preventDefault();
     if (!newUserName) return;
-    const newUser = { id: Date.now().toString(), name: newUserName.trim(), role: newUserRole, avatarUrl: newUserAvatar, active: true };
+    const name = newUserName.trim();
+    const newUser = { id: Date.now().toString(), name, role: newUserRole, avatarUrl: newUserAvatar, active: true };
     const updated = [...users, newUser];
     setUsers(updated);
     setNewUserName('');
     setNewUserAvatar('');
+    setNewUserSheetUrl('');
+    setNewUserTelegramId('');
+    setOnboardStatus(['⏳ Adding member…']);
     await saveUsersToCloud(updated);
+
+    // Ecosystem onboarding
+    if (isElectron && (newUserRole === 'Researcher' || newUserRole === 'Marketer')) {
+      try {
+        const { ipcRenderer } = window.require('electron');
+        const res = await ipcRenderer.invoke('onboard-member', {
+          name,
+          role: newUserRole,
+          sheetUrl: newUserSheetUrl || undefined,
+          telegramId: newUserTelegramId || undefined,
+          saPath,
+          masterDbId,
+        });
+        setOnboardStatus(res.results?.length ? res.results : [res.success ? '✅ Done' : `⚠️ ${res.error}`]);
+      } catch (err) {
+        setOnboardStatus([`⚠️ Onboarding error: ${err.message}`]);
+      }
+    } else {
+      setOnboardStatus([]);
+    }
   };
 
   const handleDeleteUser = async (id) => {
@@ -2800,6 +2827,24 @@ function App() {
                       <option value="Designer">Designer</option>
                       <option value="Uploader">Uploader</option>
                     </select>
+                    {newUserRole === 'Researcher' && (
+                      <input
+                        type="url"
+                        value={newUserSheetUrl}
+                        onChange={(e) => setNewUserSheetUrl(e.target.value)}
+                        placeholder="Google Sheet URL (researcher's sheet)"
+                        style={{ flex: '1 1 100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', marginTop: '0.25rem' }}
+                      />
+                    )}
+                    {newUserRole === 'Marketer' && (
+                      <input
+                        type="text"
+                        value={newUserTelegramId}
+                        onChange={(e) => setNewUserTelegramId(e.target.value)}
+                        placeholder="Telegram Chat ID"
+                        style={{ flex: '1 1 100%', padding: '0.5rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', marginTop: '0.25rem' }}
+                      />
+                    )}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '1 1 100%', marginTop: '0.25rem' }}>
                       <input type="file" ref={fileInputRef} accept="image/*" onChange={handlePhotoSelect} style={{ display: 'none' }} />
                       <button type="button" onClick={() => fileInputRef.current?.click()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px dashed rgba(99, 102, 241, 0.5)', background: 'rgba(99, 102, 241, 0.1)', color: '#a5b4fc', cursor: 'pointer', fontSize: '0.85rem', transition: 'all 0.2s' }}>
@@ -2815,6 +2860,11 @@ function App() {
                     </div>
                     <button type="submit" style={{ width: '100%', padding: '0.5rem 1rem', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', marginTop: '0.5rem' }}>Add Member</button>
                   </form>
+                  {onboardStatus.length > 0 && (
+                    <div style={{ marginBottom: '1rem', padding: '0.6rem 0.75rem', background: 'rgba(99,102,241,0.1)', borderRadius: '6px', border: '1px solid rgba(99,102,241,0.3)', fontSize: '0.8rem', color: '#c7d2fe' }}>
+                      {onboardStatus.map((s, i) => <div key={i}>{s}</div>)}
+                    </div>
+                  )}
                   <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
                     {users.map(user => (
                       <div key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', marginBottom: '0.5rem', borderRadius: '6px' }}>

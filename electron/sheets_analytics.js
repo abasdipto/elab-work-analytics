@@ -365,4 +365,217 @@ function stopAutoSync() {
     _autoSyncTimer = null;
   }
   _autoSyncConfig = null;
-  conso
+  console.log('[auto-sync] Stopped');
+}
+
+// ─── IPC Handler Registration ─────────────────────────────────────────────────
+/**
+ * @param {string} userDataPath  app.getPath('userData') — for persisting sync config
+ */
+export function setupSheetsAnalyticsHandlers(userDataPath) {
+  _configFilePath = join(userDataPath, 'analytics-sync-config.json');
+
+  // On startup: reload saved config and restart auto-sync
+  if (existsSync(_configFilePath)) {
+    try {
+      const saved = JSON.parse(readFileSync(_configFilePath, 'utf8'));
+      if (saved?.saPath && saved?.masterDbId && saved?.configs?.length) {
+        console.log('[auto-sync] Restoring saved config from', _configFilePath);
+        startAutoSync(saved);
+      }
+    } catch (e) {
+      console.error('[auto-sync] Failed to restore config:', e.message);
+    }
+  }
+
+  // ── Auto-detect researcher sheets from Drive (no manual Sheet ID needed) ─────
+  // Pass researcherNames: string[] → returns matched sheets per name
+  ipcMain.handle('analytics-auto-detect-sheets', async (_event, { saPath, researcherNames }) => {
+    try {
+      const matches = await autoDetectResearcherSheets(saPath, researcherNames);
+      return { success: true, matches };
+    } catch (err) {
+      console.error('[analytics-auto-detect-sheets]', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── List all accessible spreadsheets (for admin UI preview) ──────────────────
+  ipcMain.handle('analytics-list-sheets', async (_event, { saPath }) => {
+    try {
+      const sheets = await listAccessibleSheets(saPath);
+      return { success: true, sheets };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Fetch sales data (revenue & profit columns excluded) ─────────────────────
+  // Sheet structure (no header row):
+  //   A=OrderID  B=Status  C=School  D=Color  E=Contact  F=Email  G=Country  H=Date  I=Qty
+  //   J=Revenue (HIDDEN)   K=Profit (HIDDEN)
+  // Tabs are month names: April, May, June, ...
+  ipcMain.handle('analytics-get-sales-data', async (_event, { saPath, salesSheetId }) => {
+    try {
+      const token = await getSAToken(saPath);
+      // Batch-read all tabs in one request (cols A:I only — skip J/K)
+      const { tabs, data } = await getSheetData(token, salesSheetId, 'A:I');
+      const SKIP = new Set(['Summary', 'Dashboard', 'Instructions', 'Log']);
+      const rows = [];
+
+      for (const tab of tabs) {
+        if (SKIP.has(tab)) continue;
+        const tabRows = data[tab] || [];
+        for (const row of tabRows) {
+          if (!row[0]) continue; // skip empty rows
+          rows.push({
+            orderId:  row[0] || '',
+            status:   row[1] || '',
+            school:   row[2] || '',
+            color:    row[3] || '',
+            contact:  row[4] || '',
+            email:    row[5] || '',
+            country:  row[6] || '',
+            date:     row[7] || '',
+            quantity: Number(row[8]) || 0,
+            month:    tab,
+          });
+        }
+      }
+
+      return { success: true, data: rows };
+    } catch (err) {
+      console.error('[analytics-get-sales-data]', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Fetch all analytics rows ────────────────────────────────────────────────
+  ipcMain.handle('analytics-get-data', async (_event, { saPath, masterDbId }) => {
+    try {
+      const data = await getMasterDBData(saPath, masterDbId);
+      return { success: true, data };
+    } catch (err) {
+      console.error('[analytics-get-data]', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Append one row (evaluations, member updates, config updates) ────────────
+  ipcMain.handle('analytics-post-row', async (_event, { saPath, masterDbId, userName, actionType, detail, sheetUrl }) => {
+    try {
+      await appendMasterDBRow(saPath, masterDbId, userName, actionType, detail, sheetUrl || '');
+      return { success: true };
+    } catch (err) {
+      console.error('[analytics-post-row]', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Manual one-shot sync ────────────────────────────────────────────────────
+  ipcMain.handle('analytics-sync-sheets', async (_event, { saPath, masterDbId, configs }) => {
+    try {
+      const result = await syncResearcherSheets(saPath, masterDbId, configs);
+      return result;
+    } catch (err) {
+      console.error('[analytics-sync-sheets]', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Configure (and start) background auto-sync ──────────────────────────────
+  // Args: { saPath, masterDbId, configs, intervalMinutes }
+  ipcMain.handle('analytics-configure-auto-sync', async (_event, cfg) => {
+    try {
+      persistConfig(cfg);
+      startAutoSync(cfg);
+      return { success: true };
+    } catch (err) {
+      console.error('[analytics-configure-auto-sync]', err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ── Stop background auto-sync ───────────────────────────────────────────────
+  ipcMain.handle('analytics-stop-auto-sync', async () => {
+    stopAutoSync();
+    if (_configFilePath && existsSync(_configFilePath)) {
+      try { writeFileSync(_configFilePath, '{}', 'utf8'); } catch (_) {}
+    }
+    return { success: true };
+  });
+
+  // ── Get current auto-sync status ────────────────────────────────────────────
+  ipcMain.handle('analytics-get-sync-status', async () => {
+    return {
+      running: !!_autoSyncTimer,
+      intervalMinutes: _autoSyncConfig?.intervalMinutes || 5,
+      config: _autoSyncConfig,
+    };
+  });
+
+  // ── Central onboarding: add member across the ecosystem ─────────────────────
+  // Args: { name, role, sheetUrl?, telegramId?, saPath, masterDbId }
+  //   Researcher → adds to eLab BD Upload researcher_sheets + creates Master DB tab
+  //   Marketer   → adds to eLab BD Upload marketers (shared with FBLAB)
+  ipcMain.handle('onboard-member', async (_event, { name, role, sheetUrl, telegramId, saPath, masterDbId }) => {
+    const ELAB_CONFIG = 'D:\\Own Build\\eLab BD Upload\\config.json';
+    const results = [];
+    try {
+      const cfg = existsSync(ELAB_CONFIG)
+        ? JSON.parse(readFileSync(ELAB_CONFIG, 'utf8'))
+        : {};
+      let configChanged = false;
+
+      // ── Researcher ─────────────────────────────────────────────────────────
+      if (role === 'Researcher' && sheetUrl) {
+        const match = sheetUrl.match(/\/d\/([a-zA-Z0-9_-]+)/);
+        const sheetId = match ? match[1] : sheetUrl.trim();
+        if (sheetId) {
+          cfg.researcher_sheets = cfg.researcher_sheets || {};
+          cfg.researcher_sheets[name] = sheetId;
+          configChanged = true;
+          results.push(`✅ Added ${name} to eLab BD Upload researcher_sheets`);
+
+          // Create Master DB tab for this researcher
+          if (saPath && masterDbId) {
+            try {
+              const token = await getSAToken(saPath);
+              const tabs  = await getTabNames(token, masterDbId);
+              if (!tabs.includes(name)) {
+                const ok = await createTab(token, masterDbId, name);
+                if (ok) {
+                  await appendRows(token, masterDbId, name, [
+                    ['Timestamp', 'Action Type', 'User', 'Detail', 'Sheet URL']
+                  ]);
+                  results.push(`✅ Created Master DB tab for ${name}`);
+                }
+              } else {
+                results.push(`ℹ️ Master DB tab for ${name} already exists`);
+              }
+            } catch (e) {
+              results.push(`⚠️ Master DB tab error: ${e.message}`);
+            }
+          }
+        }
+      }
+
+      // ── Marketer ──────────────────────────────────────────────────────────
+      if (role === 'Marketer' && telegramId) {
+        cfg.marketers = cfg.marketers || {};
+        cfg.marketers[name] = telegramId.trim();
+        configChanged = true;
+        results.push(`✅ Added ${name} to marketers (eLab BD Upload + FBLAB)`);
+      }
+
+      if (configChanged) {
+        writeFileSync(ELAB_CONFIG, JSON.stringify(cfg, null, 4), 'utf8');
+      }
+
+      return { success: true, results };
+    } catch (err) {
+      console.error('[onboard-member]', err.message);
+      return { success: false, error: err.message, results };
+    }
+  });
+}
