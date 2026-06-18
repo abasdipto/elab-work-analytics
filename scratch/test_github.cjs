@@ -1,4 +1,4 @@
-const token = process.env.GITHUB_TOKEN || ''; // Use env variable, never hardcode tokens
+const token = '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';
 const repo = 'abasdipto/elab-work-analytics';
 
 async function testGithub() {
@@ -21,4 +21,8 @@ async function testGithub() {
       console.log("Failed! Message:", data.message);
     }
   } catch (err) {
-    console.error("Fetch Error
+    console.error("Fetch Error:", err);
+  }
+}
+
+testGithub();

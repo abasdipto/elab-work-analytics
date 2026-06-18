@@ -2802,4 +2802,205 @@ function App() {
                     </select>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '1 1 100%', marginTop: '0.25rem' }}>
                       <input type="file" ref={fileInputRef} accept="image/*" onChange={handlePhotoSelect} style={{ display: 'none' }} />
-                      <button type="button" onClick={() => fileInputR
+                      <button type="button" onClick={() => fileInputRef.current?.click()} style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '0.5rem 0.75rem', borderRadius: '6px', border: '1px dashed rgba(99, 102, 241, 0.5)', background: 'rgba(99, 102, 241, 0.1)', color: '#a5b4fc', cursor: 'pointer', fontSize: '0.85rem', transition: 'all 0.2s' }}>
+                        <Camera size={16} />
+                        {newUserAvatar ? 'Change Photo' : 'Upload Photo'}
+                      </button>
+                      {newUserAvatar && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <img src={newUserAvatar} alt="Preview" style={{ width: '32px', height: '32px', borderRadius: '50%', objectFit: 'cover', border: '2px solid var(--primary)' }} />
+                          <button type="button" onClick={() => setNewUserAvatar('')} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontSize: '0.75rem' }}>✕</button>
+                        </div>
+                      )}
+                    </div>
+                    <button type="submit" style={{ width: '100%', padding: '0.5rem 1rem', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', marginTop: '0.5rem' }}>Add Member</button>
+                  </form>
+                  <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                    {users.map(user => (
+                      <div key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.5rem', background: 'rgba(255,255,255,0.05)', marginBottom: '0.5rem', borderRadius: '6px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ position: 'relative', cursor: 'pointer' }} onClick={() => { setEditingPhotoUserId(user.id); editFileInputRef.current?.click(); }}>
+                            <Avatar user={user} size={28} />
+                            <div style={{ position: 'absolute', bottom: '-2px', right: '-2px', width: '14px', height: '14px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1.5px solid #1e293b' }}>
+                              <Camera size={8} color="#fff" />
+                            </div>
+                          </div>
+                          <div>
+                            <span style={{ color: '#fff', fontWeight: 500 }}>{user.name}</span>
+                            <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginLeft: '0.5rem' }}>({user.role})</span>
+                          </div>
+                        </div>
+                        <button onClick={() => handleDeleteUser(user.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}>
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  <input type="file" ref={editFileInputRef} accept="image/*" onChange={handleEditPhotoSelect} style={{ display: 'none' }} />
+                </div>
+              </>
+            ) : (
+              <div style={{ background: 'rgba(0,0,0,0.2)', padding: '1.25rem', borderRadius: '8px' }}>
+                <h3 style={{ fontSize: '1.1rem', color: '#a5b4fc', marginBottom: '1rem' }}>Submit Performance Evaluation</h3>
+                
+                {evalMsg && (
+                  <div style={{ 
+                    padding: '8px 12px', 
+                    borderRadius: '6px', 
+                    background: evalMsg.includes('failed') ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+                    border: evalMsg.includes('failed') ? '1px solid rgba(239,68,68,0.3)' : '1px solid rgba(34,197,94,0.3)',
+                    color: evalMsg.includes('failed') ? '#fca5a5' : '#bbf7d0',
+                    fontSize: '0.85rem',
+                    marginBottom: '1rem'
+                  }}>
+                    {evalMsg}
+                  </div>
+                )}
+                
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '6px' }}>Select Team Member</label>
+                  <select 
+                    value={evalUser}
+                    onChange={(e) => setEvalUser(e.target.value)}
+                    style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff' }}
+                  >
+                    {users.map(u => (
+                      <option key={u.id} value={u.name}>{u.name} ({u.role})</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div style={{ marginBottom: '1rem' }}>
+                  <label style={{ display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '6px' }}>Evaluation Period (Year/Month)</label>
+                  <input 
+                    type="text" 
+                    value={evalPeriod}
+                    onChange={(e) => setEvalPeriod(e.target.value)}
+                    placeholder="e.g. 2026, or June 2026"
+                    style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff' }}
+                  />
+                </div>
+
+                {/* Rating Teamwork */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span style={{ color: '#94a3b8' }}>Teamwork & Behavior (১-৫)</span>
+                    <span style={{ color: '#a5b4fc', fontWeight: 600 }}>⭐ {evalTeamwork} / 5</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="5" 
+                    step="0.1"
+                    value={evalTeamwork}
+                    onChange={(e) => setEvalTeamwork(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: 'var(--primary)' }}
+                  />
+                </div>
+
+                {/* Rating Rules */}
+                <div style={{ marginBottom: '1rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span style={{ color: '#94a3b8' }}>Rules & Office Culture (১-৫)</span>
+                    <span style={{ color: '#a5b4fc', fontWeight: 600 }}>⭐ {evalRules} / 5</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="5" 
+                    step="0.1"
+                    value={evalRules}
+                    onChange={(e) => setEvalRules(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: 'var(--primary)' }}
+                  />
+                </div>
+
+                {/* Rating Helping */}
+                <div style={{ marginBottom: '1.25rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: '6px' }}>
+                    <span style={{ color: '#94a3b8' }}>Helping Others (১-৫)</span>
+                    <span style={{ color: '#a5b4fc', fontWeight: 600 }}>⭐ {evalHelping} / 5</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="1" 
+                    max="5" 
+                    step="0.1"
+                    value={evalHelping}
+                    onChange={(e) => setEvalHelping(Number(e.target.value))}
+                    style={{ width: '100%', accentColor: 'var(--primary)' }}
+                  />
+                </div>
+
+                {/* Feedback notes */}
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ display: 'block', color: '#94a3b8', fontSize: '0.85rem', marginBottom: '6px' }}>Remarks / Feedback (ফিডব্যক/মন্তব্য)</label>
+                  <textarea 
+                    value={evalNotes}
+                    onChange={(e) => setEvalNotes(e.target.value)}
+                    placeholder="Enter employee performance review notes..."
+                    rows="3"
+                    style={{ width: '100%', padding: '0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', resize: 'vertical', fontFamily: 'inherit' }}
+                  />
+                </div>
+
+                <button 
+                  onClick={async () => {
+                    const finalUser = evalUser || (users.length > 0 ? users[0].name : '');
+                    if (!finalUser) {
+                      setEvalMsg('Please select a member first.');
+                      return;
+                    }
+                    setEvalSubmitting(true);
+                    setEvalMsg('');
+                    const success = await submitEvaluation(finalUser, evalTeamwork, evalRules, evalHelping, evalPeriod, evalNotes);
+                    setEvalSubmitting(false);
+                    if (success) {
+                      setEvalMsg('✅ Evaluation submitted successfully!');
+                      setEvalNotes('');
+                    } else {
+                      setEvalMsg('❌ Submission failed. Check Master API connection.');
+                    }
+                  }}
+                  disabled={evalSubmitting}
+                  style={{ width: '100%', padding: '0.75rem', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}
+                >
+                  {evalSubmitting ? 'Submitting...' : 'Submit Rating'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Lightbox Modal */}
+      {isLightboxOpen && activeScreenshot && (
+        <div className="lightbox-overlay" onClick={() => setIsLightboxOpen(false)}>
+          <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
+            <button className="lightbox-close" onClick={() => setIsLightboxOpen(false)}>✕</button>
+            <GithubImage 
+              downloadUrl={activeScreenshot.downloadUrl} 
+              token={githubToken} 
+              alt={`Screenshot at ${activeScreenshot.timeStr}`}
+              className="lightbox-image"
+            />
+            <div className="lightbox-caption">
+              Captured at {activeScreenshot.timeStr} on {trackerDate}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Wrap App with ErrorBoundary for export
+function AppWithErrorBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  );
+}
+
+export default AppWithErrorBoundary;
