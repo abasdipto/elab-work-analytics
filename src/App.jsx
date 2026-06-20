@@ -2712,6 +2712,7 @@ function App() {
                         }}
                         style={{ padding: '0.4rem 0.6rem', borderRadius: '6px', border: '1px solid var(--glass-border)', background: '#0f172a', color: '#fff', fontSize: '0.85rem' }}
                       >
+                        <option value={1}>1 minute</option>
                         <option value={5}>5 minutes</option>
                         <option value={10}>10 minutes</option>
                         <option value={30}>30 minutes</option>
