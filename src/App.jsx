@@ -760,7 +760,7 @@ function App() {
               .filter(Boolean);
               
             totalSales = daySales.filter(s => {
-              const saleSchool = safeLower(s.schoolName).trim();
+              const saleSchool = safeLower(s.school || s.schoolName).trim();
               return userSchools.some(userSchool => 
                 userSchool && saleSchool && (saleSchool.includes(userSchool) || userSchool.includes(saleSchool))
               );
