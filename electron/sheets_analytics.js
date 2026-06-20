@@ -496,6 +496,26 @@ export function setupSheetsAnalyticsHandlers(userDataPath) {
     }
   });
 
+  // ── Trigger GitHub Actions repository_dispatch (updates web version data) ───
+  ipcMain.handle('analytics-trigger-github-sync', async (_event, { token, repo }) => {
+    if (!token || !repo) return { success: false, error: 'Missing token or repo' };
+    try {
+      const r = await fetch(`https://api.github.com/repos/${repo}/dispatches`, {
+        method: 'POST',
+        headers: {
+          Authorization: `token ${token}`,
+          Accept: 'application/vnd.github.v3+json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'eLab-Analytics-Electron',
+        },
+        body: JSON.stringify({ event_type: 'data-sync' }),
+      });
+      return r.status === 204 ? { success: true } : { success: false, error: `GitHub API ${r.status}` };
+    } catch (e) {
+      return { success: false, error: e.message };
+    }
+  });
+
   // ── Stop background auto-sync ───────────────────────────────────────────────
   ipcMain.handle('analytics-stop-auto-sync', async () => {
     stopAutoSync();

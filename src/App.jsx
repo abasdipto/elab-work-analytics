@@ -844,6 +844,12 @@ function App() {
         const summary = parts.length ? parts.join(', ') : 'up-to-date';
         setSyncMsg(`🔄 Auto-synced (${new Date(result.time || Date.now()).toLocaleTimeString()}): ${summary}`);
         fetchData();
+        // Trigger GitHub Actions to update web version data
+        const ghToken = localStorage.getItem('elab_github_token');
+        const ghRepo  = localStorage.getItem('elab_github_repo');
+        if (ghToken && ghRepo) {
+          ipcRenderer.invoke('analytics-trigger-github-sync', { token: ghToken, repo: ghRepo });
+        }
       } else {
         setSyncMsg(`⚠️ Auto-sync error: ${result.error || 'Unknown'}`);
       }
