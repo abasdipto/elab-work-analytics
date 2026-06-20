@@ -115,24 +115,30 @@ async function main() {
       console.log(`Reading researcher sheet: ${resName} (${resId})…`);
       try {
         const { tabs: resTabs, data: resData } = await getSheetData(token, resId, 'A:F');
+        const tabUrl = `https://docs.google.com/spreadsheets/d/${resId}/`;
         let added = 0;
         for (const tab of resTabs) {
           if (SKIP_TABS.has(tab)) continue;
           const rows = resData[tab] || [];
-          // Detect header row — skip row 0 if it looks like headers
-          const startIdx = rows.length > 0 && isNaN(Date.parse(String(rows[0]?.[0]))) ? 1 : 0;
-          for (let i = startIdx; i < rows.length; i++) {
+          // Row 0 is always header — skip it
+          for (let i = 1; i < rows.length; i++) {
             const r = rows[i];
-            if (!r[0]) continue;
-            const detail = String(r[3] || r[2] || '');
-            if (/ghp_[A-Za-z0-9]{36}|github_pat_|gho_|ghs_|private_key|BEGIN RSA/i.test(detail)) continue;
-            // Map columns flexibly: A=Timestamp, B=ActionType or School, C=Detail or Status
+            const schoolName = String(r[1] || '').trim(); // Col B = school name
+            if (!schoolName) continue;
+            const statusVal  = String(r[4] || '').trim(); // Col E = link or status
+            const markerVal  = String(r[5] || '').trim(); // Col F = 'done' (marketers)
+
+            // Determine action type from status columns
+            let actionType = 'Name Added';
+            if (statusVal.startsWith('http')) actionType = 'Upload Done';
+            else if (statusVal.toLowerCase() === 'done' || markerVal.toLowerCase() === 'done') actionType = 'Design Done';
+
             masterRows.push({
-              Timestamp:     r[0] || '',
-              'Action Type': r[1] || '',
+              Timestamp:     new Date().toISOString(),
+              'Action Type': actionType,
               User:          resName,
-              Detail:        detail,
-              'Sheet URL':   r[4] || r[5] || '',
+              Detail:        schoolName,
+              'Sheet URL':   statusVal.startsWith('http') ? statusVal : tabUrl,
               _source:       'researcher',
             });
             added++;
